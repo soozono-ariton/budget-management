@@ -146,7 +146,7 @@
           </div>
           <div class="grid2">
             <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
-            <div class="row"><label>受け取り方法</label>
+            <div class="row"><label>受取方法</label>
               <select id="dMethod">
                 <option value="現金">現金</option>
                 <option value="PayPay">PayPay</option>
@@ -156,8 +156,9 @@
           </div>
           <div class="grid2">
             <div class="row"><label>日付</label><input id="dDate" type="date"></div>
-            <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
+            <div class="row"><label>受取者</label><input id="dRecipient" placeholder="例：主催たろう"></div>
           </div>
+          <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
           <button class="btn" style="width:100%">登録する</button>
         </form>
       </div>
@@ -202,10 +203,6 @@
       <div class="card">
         <h2>受け取り方法別</h2>
         <div id="methodChart"></div>
-      </div>
-      <div class="card">
-        <h2>カンパ内訳（人別）</h2>
-        <div id="donorChart"></div>
       </div>
       <div class="card">
         <h2>経費内訳</h2>
@@ -298,6 +295,7 @@ async function addDonation(ev) {
     username: dUsername.value.trim(),
     amount: +dAmount.value,
     method: dMethod.value,
+    recipient: dRecipient.value.trim(),
     memo: dMemo.value.trim(),
   };
   if (dDate.value) row.date = dDate.value;
@@ -388,7 +386,7 @@ function render() {
       <div class="item">
         <div class="info">
           <div class="name">${esc(d.name)}</div>
-          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
+          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.recipient ? ' ・ 受取:' + esc(d.recipient) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
         </div>
         <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
         <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
@@ -424,18 +422,6 @@ function render() {
       <div class="bar-row">
         <div class="bar-label"><span>${esc(m)}</span><strong>${yen(amt)}</strong></div>
         <div class="bar-track"><div class="bar-fill" style="width:${amt / maxM * 100}%"></div></div>
-      </div>`).join('');
-
-  const byDonor = {};
-  dons.forEach(d => byDonor[d.name] = (byDonor[d.name] || 0) + d.amount);
-  const donorEntries = Object.entries(byDonor).sort((a, b) => b[1] - a[1]);
-  const maxD = donorEntries[0]?.[1] || 1;
-  document.getElementById('donorChart').innerHTML = donorEntries.length === 0
-    ? '<div class="empty">データなし</div>'
-    : donorEntries.map(([name, amt]) => `
-      <div class="bar-row">
-        <div class="bar-label"><span>${esc(name)}</span><strong>${yen(amt)}</strong></div>
-        <div class="bar-track"><div class="bar-fill" style="width:${amt / maxD * 100}%"></div></div>
       </div>`).join('');
 
   const maxE = Math.max(...exps.map(e => e.amount), 1);
