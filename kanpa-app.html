@@ -190,6 +190,20 @@
 
     <div id="panel-report" style="display:none">
       <div class="card">
+        <h2>🎯 目標金額と進捗</h2>
+        <form onsubmit="return saveGoal(event)">
+          <div class="row" style="display:flex; gap:8px; align-items:center">
+            <input id="goalAmount" type="number" min="0" placeholder="目標金額（円）" style="flex:1">
+            <button class="btn secondary" style="white-space:nowrap">保存</button>
+          </div>
+        </form>
+        <div id="goalProgress"></div>
+      </div>
+      <div class="card">
+        <h2>受け取り方法別</h2>
+        <div id="methodChart"></div>
+      </div>
+      <div class="card">
         <h2>カンパ内訳（人別）</h2>
         <div id="donorChart"></div>
       </div>
@@ -331,6 +345,16 @@ async function delExpense(id) {
   await loadAll();
 }
 
+// ===== 目標金額 =====
+async function saveGoal(ev) {
+  ev.preventDefault();
+  const goal = +document.getElementById('goalAmount').value || 0;
+  const { error } = await db.from('projects').update({ goal_amount: goal }).eq('id', state.currentProject);
+  if (error) return alert('保存に失敗しました: ' + error.message);
+  await loadAll();
+  return false;
+}
+
 // ===== タブ =====
 function switchTab(tab) {
   state.tab = tab;
@@ -372,6 +396,35 @@ function render() {
 
   document.getElementById('donationList').innerHTML = list(dons, 'in', 'delDonation');
   document.getElementById('expenseList').innerHTML = list(exps, 'out', 'delExpense');
+
+  // 目標金額と進捗
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  const goal = proj?.goal_amount || 0;
+  document.getElementById('goalAmount').value = goal || '';
+  const pct = goal > 0 ? Math.round(sumIn / goal * 100) : 0;
+  document.getElementById('goalProgress').innerHTML = goal > 0
+    ? `<div style="display:flex; justify-content:space-between; align-items:baseline; margin:14px 0 6px">
+         <span style="font-size:26px; font-weight:700; color:${pct >= 100 ? 'var(--green)' : 'var(--primary)'}">${pct}%</span>
+         <span style="font-size:13px; color:var(--muted)">${yen(sumIn)} / ${yen(goal)}</span>
+       </div>
+       <div class="bar-track" style="height:16px">
+         <div class="bar-fill" style="width:${Math.min(pct, 100)}%; background:${pct >= 100 ? 'var(--green)' : 'var(--primary)'}"></div>
+       </div>
+       <p style="font-size:12px; color:var(--muted); margin-top:8px">${pct >= 100 ? '🎉 目標達成！' : 'あと ' + yen(goal - sumIn)}</p>`
+    : '<p style="font-size:13px; color:var(--muted); margin-top:10px">目標金額を設定すると、達成率がここに表示されます。</p>';
+
+  // 受け取り方法別
+  const byMethod = {};
+  dons.forEach(d => { const m = d.method || 'その他'; byMethod[m] = (byMethod[m] || 0) + d.amount; });
+  const methodEntries = Object.entries(byMethod).sort((a, b) => b[1] - a[1]);
+  const maxM = methodEntries[0]?.[1] || 1;
+  document.getElementById('methodChart').innerHTML = methodEntries.length === 0
+    ? '<div class="empty">データなし</div>'
+    : methodEntries.map(([m, amt]) => `
+      <div class="bar-row">
+        <div class="bar-label"><span>${esc(m)}</span><strong>${yen(amt)}</strong></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${amt / maxM * 100}%"></div></div>
+      </div>`).join('');
 
   const byDonor = {};
   dons.forEach(d => byDonor[d.name] = (byDonor[d.name] || 0) + d.amount);
