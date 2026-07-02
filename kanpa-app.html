@@ -132,6 +132,7 @@
 
     <div class="tabs">
       <button id="tab-kanpa" class="active" onclick="switchTab('kanpa')">💰 カンパ登録</button>
+      <button id="tab-yosan" onclick="switchTab('yosan')">📋 予算登録</button>
       <button id="tab-keihi" onclick="switchTab('keihi')">🧾 経費登録</button>
       <button id="tab-report" onclick="switchTab('report')">📊 集計</button>
     </div>
@@ -165,6 +166,25 @@
       <div class="card">
         <h2>カンパ一覧</h2>
         <div id="donationList"></div>
+      </div>
+    </div>
+
+    <div id="panel-yosan" style="display:none">
+      <div class="card">
+        <h2>予算を登録</h2>
+        <form onsubmit="return addBudget(event)">
+          <div class="grid2">
+            <div class="row"><label>項目</label><input id="bName" required placeholder="例：フラワースタンド代"></div>
+            <div class="row"><label>予算額（円）</label><input id="bAmount" type="number" min="1" required placeholder="20000"></div>
+          </div>
+          <div class="row"><label>メモ</label><input id="bMemo" placeholder="任意"></div>
+          <button class="btn" style="width:100%">登録する</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>予算一覧</h2>
+        <div id="budgetList"></div>
+        <div id="budgetSummary"></div>
       </div>
     </div>
 
@@ -233,7 +253,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_DqqFbNN1o_rHv79Kzq83dw_9WqDEOMR';
 const configured = SUPABASE_URL.startsWith('https://');
 let db = null;
 
-const state = { projects: [], donations: [], expenses: [], currentProject: null, tab: 'kanpa' };
+const state = { projects: [], donations: [], expenses: [], budgets: [], currentProject: null, tab: 'kanpa' };
 const yen = n => '¥' + n.toLocaleString('ja-JP');
 
 // ===== 前回入力した名前・ユーザーネームをこの端末に記憶して自動入力 =====
@@ -256,18 +276,20 @@ function saveProfile() {
 
 // ===== データ読み込み =====
 async function loadAll() {
-  const [p, d, e] = await Promise.all([
+  const [p, d, e, b] = await Promise.all([
     db.from('projects').select('*').order('created_at'),
     db.from('donations').select('*').order('date', { ascending: false }),
     db.from('expenses').select('*').order('date', { ascending: false }),
+    db.from('budgets').select('*').order('created_at'),
   ]);
-  if (p.error || d.error || e.error) {
-    alert('データの読み込みに失敗しました: ' + (p.error || d.error || e.error).message);
+  if (p.error || d.error || e.error || b.error) {
+    alert('データの読み込みに失敗しました: ' + (p.error || d.error || e.error || b.error).message);
     return;
   }
   state.projects = p.data;
   state.donations = d.data;
   state.expenses = e.data;
+  state.budgets = b.data;
   if (!state.currentProject && state.projects.length > 0) {
     state.currentProject = state.projects[0].id;
   }
@@ -329,6 +351,30 @@ async function addExpense(ev) {
   return false;
 }
 
+// ===== 予算 =====
+async function addBudget(ev) {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const { error } = await db.from('budgets').insert({
+    project_id: state.currentProject,
+    name: bName.value.trim(),
+    amount: +bAmount.value,
+    memo: bMemo.value.trim(),
+  });
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+async function delBudget(id) {
+  if (!confirm('この予算項目を削除しますか？')) return;
+  const { error } = await db.from('budgets').delete().eq('id', id);
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+
 // ===== 削除 =====
 async function delDonation(id) {
   if (!confirm('このカンパ記録を削除しますか？')) return;
@@ -356,7 +402,7 @@ async function saveGoal(ev) {
 // ===== タブ =====
 function switchTab(tab) {
   state.tab = tab;
-  ['kanpa', 'keihi', 'report'].forEach(t => {
+  ['kanpa', 'yosan', 'keihi', 'report'].forEach(t => {
     document.getElementById('panel-' + t).style.display = t === tab ? '' : 'none';
     document.getElementById('tab-' + t).classList.toggle('active', t === tab);
   });
@@ -394,6 +440,26 @@ function render() {
 
   document.getElementById('donationList').innerHTML = list(dons, 'in', 'delDonation');
   document.getElementById('expenseList').innerHTML = list(exps, 'out', 'delExpense');
+
+  // 予算一覧と予算vs経費
+  const buds = state.budgets.filter(b => b.project_id === state.currentProject);
+  const sumBudget = buds.reduce((s, b) => s + b.amount, 0);
+  document.getElementById('budgetList').innerHTML = buds.length === 0
+    ? '<div class="empty">まだ登録がありません</div>'
+    : buds.map(b => `
+      <div class="item">
+        <div class="info">
+          <div class="name">${esc(b.name)}</div>
+          <div class="meta">${b.memo ? esc(b.memo) : ''}</div>
+        </div>
+        <div class="amount">${yen(b.amount)}</div>
+        <button class="del" onclick="delBudget('${b.id}')" title="削除">✕</button>
+      </div>`).join('');
+  document.getElementById('budgetSummary').innerHTML = buds.length === 0 ? '' : `
+    <div style="border-top:1px solid var(--border); margin-top:8px; padding-top:12px; font-size:13px; display:flex; justify-content:space-between">
+      <span style="color:var(--muted)">予算合計 <strong style="color:var(--text)">${yen(sumBudget)}</strong> ／ 経費合計 <strong style="color:var(--text)">${yen(sumOut)}</strong></span>
+      <strong style="color:${sumOut <= sumBudget ? 'var(--green)' : 'var(--red)'}">${sumOut <= sumBudget ? '残り ' + yen(sumBudget - sumOut) : '超過 ' + yen(sumOut - sumBudget)}</strong>
+    </div>`;
 
   // 目標金額と進捗
   const proj = state.projects.find(p => p.id === state.currentProject);
