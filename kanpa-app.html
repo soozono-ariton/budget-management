@@ -138,21 +138,21 @@
 
     <div id="panel-kanpa">
       <div class="card">
-        <h2>👤 あなたのユーザーネーム</h2>
-        <form onsubmit="return saveUsername(event)">
-          <div class="row" style="display:flex; gap:8px; margin-bottom:0">
-            <input id="uName" placeholder="例：みかん" style="flex:1">
-            <button class="btn secondary" style="white-space:nowrap">保存</button>
-          </div>
-          <p id="uNameStatus" style="font-size:12px; color:var(--muted); margin-top:8px"></p>
-        </form>
-      </div>
-      <div class="card">
         <h2>カンパを登録</h2>
         <form onsubmit="return addDonation(event)">
           <div class="grid2">
             <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
+            <div class="row"><label>ユーザーネーム</label><input id="dUsername" placeholder="例：@mikan_123"></div>
+          </div>
+          <div class="grid2">
             <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
+            <div class="row"><label>受け取り方法</label>
+              <select id="dMethod">
+                <option value="現金">現金</option>
+                <option value="PayPay">PayPay</option>
+                <option value="オンライン">オンライン</option>
+              </select>
+            </div>
           </div>
           <div class="grid2">
             <div class="row"><label>日付</label><input id="dDate" type="date"></div>
@@ -225,34 +225,22 @@ let db = null;
 const state = { projects: [], donations: [], expenses: [], currentProject: null, tab: 'kanpa' };
 const yen = n => '¥' + n.toLocaleString('ja-JP');
 
-// ===== ユーザーネーム（この端末のブラウザに記憶） =====
-const USERNAME_KEY = 'kanpa_username';
+// ===== 前回入力した名前・ユーザーネームをこの端末に記憶して自動入力 =====
+const PROFILE_KEY = 'kanpa_profile';
 
-function loadUsername() {
-  const saved = localStorage.getItem(USERNAME_KEY) || '';
-  document.getElementById('uName').value = saved;
-  updateUsernameStatus(saved);
-  if (saved && !dName.value) dName.value = saved;
+function loadProfile() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
+    if (p.name) dName.value = p.name;
+    if (p.username) dUsername.value = p.username;
+  } catch (e) { /* 無視 */ }
 }
 
-function saveUsername(ev) {
-  ev.preventDefault();
-  const name = document.getElementById('uName').value.trim();
-  if (!name) {
-    localStorage.removeItem(USERNAME_KEY);
-    updateUsernameStatus('');
-    return false;
-  }
-  localStorage.setItem(USERNAME_KEY, name);
-  updateUsernameStatus(name);
-  dName.value = name;
-  return false;
-}
-
-function updateUsernameStatus(name) {
-  document.getElementById('uNameStatus').textContent = name
-    ? `「${name}」として記憶中。カンパ登録のお名前欄に自動入力されます。`
-    : '未登録です。保存すると次回からお名前欄に自動入力されます。';
+function saveProfile() {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify({
+    name: dName.value.trim(),
+    username: dUsername.value.trim(),
+  }));
 }
 
 // ===== データ読み込み =====
@@ -293,15 +281,18 @@ async function addDonation(ev) {
   const row = {
     project_id: state.currentProject,
     name: dName.value.trim(),
+    username: dUsername.value.trim(),
     amount: +dAmount.value,
+    method: dMethod.value,
     memo: dMemo.value.trim(),
   };
   if (dDate.value) row.date = dDate.value;
   const { error } = await db.from('donations').insert(row);
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
+  saveProfile();
   ev.target.reset();
-  dName.value = localStorage.getItem(USERNAME_KEY) || '';
+  loadProfile();
   await loadAll();
   return false;
 }
@@ -373,7 +364,7 @@ function render() {
       <div class="item">
         <div class="info">
           <div class="name">${esc(d.name)}</div>
-          <div class="meta">${d.date}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
+          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
         </div>
         <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
         <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
@@ -425,7 +416,7 @@ if (!configured) {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   document.getElementById('app').style.display = '';
   document.getElementById('loadingMsg').style.display = '';
-  loadUsername();
+  loadProfile();
   loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
 }
 </script>
