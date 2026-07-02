@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>カンパ管理</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --primary: #e05297;
+    --primary-light: #fce7f1;
+    --green: #16a34a;
+    --red: #dc2626;
+    --bg: #f7f7fa;
+    --card: #ffffff;
+    --text: #1f2330;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  header {
+    background: linear-gradient(135deg, #e05297, #9b5de5);
+    color: #fff; padding: 16px 20px;
+  }
+  header h1 { font-size: 18px; font-weight: 700; }
+  header p { font-size: 12px; opacity: .85; margin-top: 2px; }
+  .container { max-width: 720px; margin: 0 auto; padding: 16px; }
+
+  .setup-warning {
+    background: #fef3c7; border: 1px solid #f59e0b; border-radius: 12px;
+    padding: 16px; margin-bottom: 16px; font-size: 13px; line-height: 1.7;
+  }
+  .setup-warning strong { display: block; font-size: 14px; margin-bottom: 4px; }
+  .setup-warning code { background: #fff; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
+  .project-bar {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .project-bar select {
+    flex: 1; min-width: 200px; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 10px; font-size: 15px; background: var(--card);
+  }
+  .btn {
+    padding: 10px 16px; border: none; border-radius: 10px; font-size: 14px;
+    font-weight: 600; cursor: pointer; background: var(--primary); color: #fff;
+  }
+  .btn.secondary { background: var(--card); color: var(--primary); border: 1px solid var(--primary); }
+  .btn:active { opacity: .8; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; background: #ececf2; padding: 4px; border-radius: 12px; }
+  .tabs button {
+    flex: 1; padding: 10px 4px; border: none; background: transparent; border-radius: 9px;
+    font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer;
+  }
+  .tabs button.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+
+  .card {
+    background: var(--card); border-radius: 14px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; margin-bottom: 12px; }
+
+  .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .summary .card { margin: 0; text-align: center; padding: 14px 8px; }
+  .summary .label { font-size: 11px; color: var(--muted); }
+  .summary .value { font-size: 19px; font-weight: 700; margin-top: 4px; }
+  .value.plus { color: var(--green); }
+  .value.minus { color: var(--red); }
+
+  form .row { margin-bottom: 12px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 10px; font-size: 15px; font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary-light); border-color: var(--primary); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid var(--border); gap: 8px;
+  }
+  .item:last-child { border-bottom: none; }
+  .item .info .name { font-weight: 600; font-size: 14px; }
+  .item .info .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; }
+  .amount.in { color: var(--green); }
+  .amount.out { color: var(--red); }
+  .del { background: none; border: none; color: #c4c4cc; font-size: 16px; cursor: pointer; padding: 4px; }
+  .del:hover { color: var(--red); }
+  .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 0; }
+  .loading { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 0; }
+
+  .bar-row { margin-bottom: 10px; }
+  .bar-row .bar-label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .bar-track { background: #f0f0f4; border-radius: 6px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; background: var(--primary); }
+  .bar-fill.expense { background: #f59e0b; }
+
+  .note { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎉 カンパ管理</h1>
+  <p>ファン企画のカンパ・経費をまとめて管理</p>
+</header>
+
+<div class="container">
+  <div id="setupWarning" class="setup-warning" style="display:none">
+    <strong>⚙️ 初期設定が必要です</strong>
+    このファイルをメモ帳などで開き、下の方にある <code>SUPABASE_URL</code> と <code>SUPABASE_ANON_KEY</code> に、
+    Supabaseの「Project Settings → API」に表示される値を貼り付けて保存してください。
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="project-bar">
+      <select id="projectSelect"></select>
+      <button class="btn secondary" onclick="addProject()">＋ 新しい企画</button>
+    </div>
+
+    <div class="summary">
+      <div class="card"><div class="label">カンパ合計</div><div class="value plus" id="sumIn">¥0</div></div>
+      <div class="card"><div class="label">経費合計</div><div class="value minus" id="sumOut">¥0</div></div>
+      <div class="card"><div class="label">残高</div><div class="value" id="sumBalance">¥0</div></div>
+    </div>
+
+    <div class="tabs">
+      <button id="tab-kanpa" class="active" onclick="switchTab('kanpa')">💰 カンパ登録</button>
+      <button id="tab-keihi" onclick="switchTab('keihi')">🧾 経費登録</button>
+      <button id="tab-report" onclick="switchTab('report')">📊 集計</button>
+    </div>
+
+    <div id="panel-kanpa">
+      <div class="card">
+        <h2>カンパを登録</h2>
+        <form onsubmit="return addDonation(event)">
+          <div class="grid2">
+            <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
+            <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
+          </div>
+          <div class="grid2">
+            <div class="row"><label>日付</label><input id="dDate" type="date"></div>
+            <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
+          </div>
+          <button class="btn" style="width:100%">登録する</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>カンパ一覧</h2>
+        <div id="donationList"></div>
+      </div>
+    </div>
+
+    <div id="panel-keihi" style="display:none">
+      <div class="card">
+        <h2>経費を登録</h2>
+        <form onsubmit="return addExpense(event)">
+          <div class="grid2">
+            <div class="row"><label>項目</label><input id="eName" required placeholder="例：フラワースタンド代"></div>
+            <div class="row"><label>金額（円）</label><input id="eAmount" type="number" min="1" required placeholder="15000"></div>
+          </div>
+          <div class="grid2">
+            <div class="row"><label>日付</label><input id="eDate" type="date"></div>
+            <div class="row"><label>メモ</label><input id="eMemo" placeholder="任意"></div>
+          </div>
+          <button class="btn" style="width:100%">登録する</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>経費一覧</h2>
+        <div id="expenseList"></div>
+      </div>
+    </div>
+
+    <div id="panel-report" style="display:none">
+      <div class="card">
+        <h2>カンパ内訳（人別）</h2>
+        <div id="donorChart"></div>
+      </div>
+      <div class="card">
+        <h2>経費内訳</h2>
+        <div id="expenseChart"></div>
+      </div>
+      <div class="card">
+        <h2>全企画サマリー</h2>
+        <div id="projectSummary"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="loadingMsg" class="loading" style="display:none">読み込み中…</div>
+  <p class="note">データはSupabase（クラウドDB）に保存されます。</p>
+</div>
+
+<script>
+// ============================================================
+// ★★★ ここに Supabase の接続情報を貼り付けてください ★★★
+// Supabase管理画面 → Project Settings → API で確認できます
+//   SUPABASE_URL      … 「Project URL」（https://xxxx.supabase.co）
+//   SUPABASE_ANON_KEY … 「anon public」キー（長い文字列）
+// ============================================================
+const SUPABASE_URL = 'ここにProject URLを貼る';
+const SUPABASE_ANON_KEY = 'ここにanon publicキーを貼る';
+// ============================================================
+
+const configured = SUPABASE_URL.startsWith('https://');
+let db = null;
+
+const state = { projects: [], donations: [], expenses: [], currentProject: null, tab: 'kanpa' };
+const yen = n => '¥' + n.toLocaleString('ja-JP');
+
+// ===== データ読み込み =====
+async function loadAll() {
+  const [p, d, e] = await Promise.all([
+    db.from('projects').select('*').order('created_at'),
+    db.from('donations').select('*').order('date', { ascending: false }),
+    db.from('expenses').select('*').order('date', { ascending: false }),
+  ]);
+  if (p.error || d.error || e.error) {
+    alert('データの読み込みに失敗しました: ' + (p.error || d.error || e.error).message);
+    return;
+  }
+  state.projects = p.data;
+  state.donations = d.data;
+  state.expenses = e.data;
+  if (!state.currentProject && state.projects.length > 0) {
+    state.currentProject = state.projects[0].id;
+  }
+  render();
+}
+
+// ===== 企画 =====
+async function addProject() {
+  const name = prompt('新しい企画名を入力してください');
+  if (!name) return;
+  const { data, error } = await db.from('projects').insert({ name }).select().single();
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  state.currentProject = data.id;
+  await loadAll();
+}
+
+// ===== カンパ =====
+async function addDonation(ev) {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const row = {
+    project_id: state.currentProject,
+    name: dName.value.trim(),
+    amount: +dAmount.value,
+    memo: dMemo.value.trim(),
+  };
+  if (dDate.value) row.date = dDate.value;
+  const { error } = await db.from('donations').insert(row);
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+
+// ===== 経費 =====
+async function addExpense(ev) {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const row = {
+    project_id: state.currentProject,
+    name: eName.value.trim(),
+    amount: +eAmount.value,
+    memo: eMemo.value.trim(),
+  };
+  if (eDate.value) row.date = eDate.value;
+  const { error } = await db.from('expenses').insert(row);
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+
+// ===== 削除 =====
+async function delDonation(id) {
+  if (!confirm('このカンパ記録を削除しますか？')) return;
+  const { error } = await db.from('donations').delete().eq('id', id);
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+async function delExpense(id) {
+  if (!confirm('この経費記録を削除しますか？')) return;
+  const { error } = await db.from('expenses').delete().eq('id', id);
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+
+// ===== タブ =====
+function switchTab(tab) {
+  state.tab = tab;
+  ['kanpa', 'keihi', 'report'].forEach(t => {
+    document.getElementById('panel-' + t).style.display = t === tab ? '' : 'none';
+    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+  });
+}
+
+// ===== 描画 =====
+function render() {
+  const sel = document.getElementById('projectSelect');
+  sel.innerHTML = state.projects.map(p =>
+    `<option value="${p.id}" ${p.id === state.currentProject ? 'selected' : ''}>${p.name}</option>`).join('');
+  sel.onchange = () => { state.currentProject = sel.value; render(); };
+
+  const dons = state.donations.filter(d => d.project_id === state.currentProject);
+  const exps = state.expenses.filter(d => d.project_id === state.currentProject);
+  const sumIn = dons.reduce((s, d) => s + d.amount, 0);
+  const sumOut = exps.reduce((s, d) => s + d.amount, 0);
+
+  document.getElementById('sumIn').textContent = yen(sumIn);
+  document.getElementById('sumOut').textContent = yen(sumOut);
+  const bal = document.getElementById('sumBalance');
+  bal.textContent = yen(sumIn - sumOut);
+  bal.className = 'value ' + (sumIn - sumOut >= 0 ? 'plus' : 'minus');
+
+  const list = (items, cls, delFn) => items.length === 0
+    ? '<div class="empty">まだ登録がありません</div>'
+    : items.map(d => `
+      <div class="item">
+        <div class="info">
+          <div class="name">${esc(d.name)}</div>
+          <div class="meta">${d.date}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
+        </div>
+        <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
+        <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
+      </div>`).join('');
+
+  document.getElementById('donationList').innerHTML = list(dons, 'in', 'delDonation');
+  document.getElementById('expenseList').innerHTML = list(exps, 'out', 'delExpense');
+
+  const byDonor = {};
+  dons.forEach(d => byDonor[d.name] = (byDonor[d.name] || 0) + d.amount);
+  const donorEntries = Object.entries(byDonor).sort((a, b) => b[1] - a[1]);
+  const maxD = donorEntries[0]?.[1] || 1;
+  document.getElementById('donorChart').innerHTML = donorEntries.length === 0
+    ? '<div class="empty">データなし</div>'
+    : donorEntries.map(([name, amt]) => `
+      <div class="bar-row">
+        <div class="bar-label"><span>${esc(name)}</span><strong>${yen(amt)}</strong></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${amt / maxD * 100}%"></div></div>
+      </div>`).join('');
+
+  const maxE = Math.max(...exps.map(e => e.amount), 1);
+  document.getElementById('expenseChart').innerHTML = exps.length === 0
+    ? '<div class="empty">データなし</div>'
+    : exps.slice().sort((a, b) => b.amount - a.amount).map(e => `
+      <div class="bar-row">
+        <div class="bar-label"><span>${esc(e.name)}</span><strong>${yen(e.amount)}</strong></div>
+        <div class="bar-track"><div class="bar-fill expense" style="width:${e.amount / maxE * 100}%"></div></div>
+      </div>`).join('');
+
+  document.getElementById('projectSummary').innerHTML = state.projects.map(p => {
+    const pin = state.donations.filter(d => d.project_id === p.id).reduce((s, d) => s + d.amount, 0);
+    const pout = state.expenses.filter(d => d.project_id === p.id).reduce((s, d) => s + d.amount, 0);
+    return `<div class="item">
+      <div class="info"><div class="name">${esc(p.name)}</div>
+      <div class="meta">カンパ ${yen(pin)} ／ 経費 ${yen(pout)}</div></div>
+      <div class="amount ${pin - pout >= 0 ? 'in' : 'out'}">${yen(pin - pout)}</div>
+    </div>`;
+  }).join('');
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ===== 起動 =====
+if (!configured) {
+  document.getElementById('setupWarning').style.display = '';
+} else {
+  db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  document.getElementById('app').style.display = '';
+  document.getElementById('loadingMsg').style.display = '';
+  loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
+}
+</script>
+</body>
+</html>
