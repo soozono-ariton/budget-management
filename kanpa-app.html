@@ -138,6 +138,16 @@
 
     <div id="panel-kanpa">
       <div class="card">
+        <h2>👤 あなたのユーザーネーム</h2>
+        <form onsubmit="return saveUsername(event)">
+          <div class="row" style="display:flex; gap:8px; margin-bottom:0">
+            <input id="uName" placeholder="例：みかん" style="flex:1">
+            <button class="btn secondary" style="white-space:nowrap">保存</button>
+          </div>
+          <p id="uNameStatus" style="font-size:12px; color:var(--muted); margin-top:8px"></p>
+        </form>
+      </div>
+      <div class="card">
         <h2>カンパを登録</h2>
         <form onsubmit="return addDonation(event)">
           <div class="grid2">
@@ -215,6 +225,36 @@ let db = null;
 const state = { projects: [], donations: [], expenses: [], currentProject: null, tab: 'kanpa' };
 const yen = n => '¥' + n.toLocaleString('ja-JP');
 
+// ===== ユーザーネーム（この端末のブラウザに記憶） =====
+const USERNAME_KEY = 'kanpa_username';
+
+function loadUsername() {
+  const saved = localStorage.getItem(USERNAME_KEY) || '';
+  document.getElementById('uName').value = saved;
+  updateUsernameStatus(saved);
+  if (saved && !dName.value) dName.value = saved;
+}
+
+function saveUsername(ev) {
+  ev.preventDefault();
+  const name = document.getElementById('uName').value.trim();
+  if (!name) {
+    localStorage.removeItem(USERNAME_KEY);
+    updateUsernameStatus('');
+    return false;
+  }
+  localStorage.setItem(USERNAME_KEY, name);
+  updateUsernameStatus(name);
+  dName.value = name;
+  return false;
+}
+
+function updateUsernameStatus(name) {
+  document.getElementById('uNameStatus').textContent = name
+    ? `「${name}」として記憶中。カンパ登録のお名前欄に自動入力されます。`
+    : '未登録です。保存すると次回からお名前欄に自動入力されます。';
+}
+
 // ===== データ読み込み =====
 async function loadAll() {
   const [p, d, e] = await Promise.all([
@@ -261,6 +301,7 @@ async function addDonation(ev) {
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
   ev.target.reset();
+  dName.value = localStorage.getItem(USERNAME_KEY) || '';
   await loadAll();
   return false;
 }
@@ -384,6 +425,7 @@ if (!configured) {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   document.getElementById('app').style.display = '';
   document.getElementById('loadingMsg').style.display = '';
+  loadUsername();
   loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
 }
 </script>
