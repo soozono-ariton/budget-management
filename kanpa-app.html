@@ -200,8 +200,9 @@
           </div>
           <div class="grid2">
             <div class="row"><label>日付</label><input id="eDate" type="date"></div>
-            <div class="row"><label>メモ</label><input id="eMemo" placeholder="任意"></div>
+            <div class="row"><label>対応者</label><input id="eHandler" placeholder="例：主催たろう"></div>
           </div>
+          <div class="row"><label>メモ</label><input id="eMemo" placeholder="任意"></div>
           <button class="btn" style="width:100%">登録する</button>
         </form>
       </div>
@@ -322,6 +323,7 @@ async function addExpense(ev) {
     project_id: state.currentProject,
     name: eName.value.trim(),
     amount: +eAmount.value,
+    handler: eHandler.value.trim(),
     memo: eMemo.value.trim(),
   };
   if (eDate.value) row.date = eDate.value;
@@ -414,7 +416,7 @@ function render() {
       <div class="item">
         <div class="info">
           <div class="name">${esc(d.name)}</div>
-          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.recipient ? ' ・ 受取:' + esc(d.recipient) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
+          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.recipient ? ' ・ 受取:' + esc(d.recipient) : ''}${d.handler ? ' ・ 対応:' + esc(d.handler) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
         </div>
         <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
         <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
