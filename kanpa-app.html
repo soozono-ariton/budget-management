@@ -155,7 +155,22 @@
     Supabaseの「Project Settings → API」に表示される値を貼り付けて保存してください。
   </div>
 
+  <div id="roomGate" style="display:none">
+    <div class="card" style="margin-top:20px">
+      <h2>🔑 部屋に入る</h2>
+      <p style="font-size:13px; color:var(--muted); margin-bottom:14px">グループごとに「部屋」を分けて管理します。部屋名と合言葉を入力してください。合言葉が合わないと部屋の中身は見られません。</p>
+      <div class="row"><label>部屋名</label><input id="rName" placeholder="例：〇〇ちゃん応援団"></div>
+      <div class="row"><label>合言葉</label><input id="rPass" type="password" placeholder="合言葉"></div>
+      <button class="btn" style="width:100%; margin-bottom:8px" onclick="openRoom(false)">入室する</button>
+      <button class="btn secondary" style="width:100%" onclick="openRoom(true)">新しい部屋を作る</button>
+    </div>
+  </div>
+
   <div id="app" style="display:none">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+      <span id="roomName" style="font-size:13px; color:var(--muted)"></span>
+      <button class="btn secondary" style="padding:6px 10px; font-size:12px" onclick="leaveRoom()">部屋を出る</button>
+    </div>
     <div class="project-bar">
       <select id="projectSelect"></select>
       <button class="btn secondary" onclick="addProject()">＋ 新しい企画</button>
@@ -294,26 +309,48 @@ const SUPABASE_ANON_KEY = 'sb_publishable_DqqFbNN1o_rHv79Kzq83dw_9WqDEOMR';
 const configured = SUPABASE_URL.startsWith('https://');
 let db = null;
 
-const state = { projects: [], donations: [], expenses: [], budgets: [], currentProject: null, tab: 'kanpa' };
+const state = { projects: [], donations: [], expenses: [], budgets: [], currentProject: null, tab: 'kanpa', room: null };
 const yen = n => '¥' + n.toLocaleString('ja-JP');
+
+// ===== 部屋（合言葉）管理 =====
+const ROOM_KEY = 'kanpa_room';
+
+async function openRoom(create) {
+  const name = document.getElementById('rName').value.trim();
+  const pass = document.getElementById('rPass').value;
+  if (!name || !pass) return alert('部屋名と合言葉を入力してください');
+  const fn = create ? 'create_room' : 'open_room';
+  const { data, error } = await db.rpc(fn, { p_name: name, p_pass: pass });
+  if (error) return alert('エラー: ' + error.message);
+  if (!data) return alert(create ? 'その部屋名はすでに使われています' : '部屋名か合言葉が違います');
+  state.room = { id: data, pass, name };
+  localStorage.setItem(ROOM_KEY, JSON.stringify(state.room));
+  showApp();
+}
+
+function leaveRoom() {
+  localStorage.removeItem(ROOM_KEY);
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById('roomGate').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('roomName').textContent = '部屋: ' + state.room.name;
+  document.getElementById('loadingMsg').style.display = '';
+  loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
+}
 
 // ===== データ読み込み =====
 async function loadAll() {
-  const [p, d, e, b] = await Promise.all([
-    db.from('projects').select('*').order('created_at'),
-    db.from('donations').select('*').order('date', { ascending: false }),
-    db.from('expenses').select('*').order('date', { ascending: false }),
-    db.from('budgets').select('*').order('created_at'),
-  ]);
-  if (p.error || d.error || e.error || b.error) {
-    alert('データの読み込みに失敗しました: ' + (p.error || d.error || e.error || b.error).message);
-    return;
-  }
-  state.projects = p.data;
-  state.donations = d.data;
-  state.expenses = e.data;
-  state.budgets = b.data;
-  if (!state.currentProject && state.projects.length > 0) {
+  const { data, error } = await db.rpc('room_data', { rid: state.room.id, p_pass: state.room.pass });
+  if (error) return alert('データの読み込みに失敗しました: ' + error.message);
+  if (!data) { alert('部屋名か合言葉が違います'); return leaveRoom(); }
+  state.projects = data.projects;
+  state.donations = data.donations;
+  state.expenses = data.expenses;
+  state.budgets = data.budgets;
+  if ((!state.currentProject || !state.projects.some(p => p.id === state.currentProject)) && state.projects.length > 0) {
     state.currentProject = state.projects[0].id;
   }
   render();
@@ -323,9 +360,9 @@ async function loadAll() {
 async function addProject() {
   const name = prompt('新しい企画名を入力してください');
   if (!name) return;
-  const { data, error } = await db.from('projects').insert({ name }).select().single();
+  const { data, error } = await db.rpc('room_add_project', { rid: state.room.id, p_pass: state.room.pass, pname: name });
   if (error) return alert('登録に失敗しました: ' + error.message);
-  state.currentProject = data.id;
+  state.currentProject = data;
   await loadAll();
 }
 
@@ -334,17 +371,16 @@ async function addDonation(ev) {
   ev.preventDefault();
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
-  const row = {
-    project_id: state.currentProject,
-    name: dName.value.trim(),
-    username: dUsername.value.trim(),
-    amount: +dAmount.value,
-    method: dMethod.value,
-    recipient: dRecipient.value.trim(),
-    memo: dMemo.value.trim(),
-  };
-  if (dDate.value) row.date = dDate.value;
-  const { error } = await db.from('donations').insert(row);
+  const { error } = await db.rpc('room_add_donation', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: dName.value.trim(),
+    pusername: dUsername.value.trim(),
+    pamount: +dAmount.value,
+    pmethod: dMethod.value,
+    precipient: dRecipient.value.trim(),
+    pmemo: dMemo.value.trim(),
+    pdate: dDate.value || null,
+  });
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
   ev.target.reset();
@@ -357,15 +393,14 @@ async function addExpense(ev) {
   ev.preventDefault();
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
-  const row = {
-    project_id: state.currentProject,
-    name: eName.value.trim(),
-    amount: +eAmount.value,
-    handler: eHandler.value.trim(),
-    memo: eMemo.value.trim(),
-  };
-  if (eDate.value) row.date = eDate.value;
-  const { error } = await db.from('expenses').insert(row);
+  const { error } = await db.rpc('room_add_expense', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: eName.value.trim(),
+    pamount: +eAmount.value,
+    phandler: eHandler.value.trim(),
+    pmemo: eMemo.value.trim(),
+    pdate: eDate.value || null,
+  });
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
   ev.target.reset();
@@ -401,11 +436,11 @@ async function addBudget(ev) {
   ev.preventDefault();
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
-  const { error } = await db.from('budgets').insert({
-    project_id: state.currentProject,
-    name: bName.value.trim(),
-    amount: +bAmount.value,
-    memo: bMemo.value.trim(),
+  const { error } = await db.rpc('room_add_budget', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: bName.value.trim(),
+    pamount: +bAmount.value,
+    pmemo: bMemo.value.trim(),
   });
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
@@ -415,7 +450,7 @@ async function addBudget(ev) {
 }
 async function delBudget(id) {
   if (!confirm('この予算項目を削除しますか？')) return;
-  const { error } = await db.from('budgets').delete().eq('id', id);
+  const { error } = await db.rpc('room_del_budget', { rid: state.room.id, p_pass: state.room.pass, bid: id });
   if (error) return alert('削除に失敗しました: ' + error.message);
   await loadAll();
 }
@@ -423,13 +458,13 @@ async function delBudget(id) {
 // ===== 削除 =====
 async function delDonation(id) {
   if (!confirm('このカンパ記録を削除しますか？')) return;
-  const { error } = await db.from('donations').delete().eq('id', id);
+  const { error } = await db.rpc('room_del_donation', { rid: state.room.id, p_pass: state.room.pass, did: id });
   if (error) return alert('削除に失敗しました: ' + error.message);
   await loadAll();
 }
 async function delExpense(id) {
   if (!confirm('この経費記録を削除しますか？')) return;
-  const { error } = await db.from('expenses').delete().eq('id', id);
+  const { error } = await db.rpc('room_del_expense', { rid: state.room.id, p_pass: state.room.pass, eid: id });
   if (error) return alert('削除に失敗しました: ' + error.message);
   await loadAll();
 }
@@ -438,7 +473,7 @@ async function delExpense(id) {
 async function saveGoal(ev) {
   ev.preventDefault();
   const goal = +document.getElementById('goalAmount').value || 0;
-  const { error } = await db.from('projects').update({ goal_amount: goal }).eq('id', state.currentProject);
+  const { error } = await db.rpc('room_set_goal', { rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject, goal: goal });
   if (error) return alert('保存に失敗しました: ' + error.message);
   await loadAll();
   return false;
@@ -567,9 +602,13 @@ if (!configured) {
   document.getElementById('setupWarning').style.display = '';
 } else {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  document.getElementById('app').style.display = '';
-  document.getElementById('loadingMsg').style.display = '';
-  loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
+  const savedRoom = localStorage.getItem(ROOM_KEY);
+  if (savedRoom) {
+    state.room = JSON.parse(savedRoom);
+    showApp();
+  } else {
+    document.getElementById('roomGate').style.display = '';
+  }
 }
 </script>
 </body>
