@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>カンパ管理</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --primary: #e05297;
@@ -166,7 +167,10 @@
         </form>
       </div>
       <div class="card">
-        <h2>カンパ一覧</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+          <h2 style="margin-bottom:0">カンパ一覧</h2>
+          <button class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="exportDonations()">📥 Excel出力</button>
+        </div>
         <div id="donationList"></div>
       </div>
     </div>
@@ -333,6 +337,29 @@ async function addExpense(ev) {
   ev.target.reset();
   await loadAll();
   return false;
+}
+
+// ===== カンパ一覧のExcel出力 =====
+function exportDonations() {
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  const dons = state.donations.filter(d => d.project_id === state.currentProject);
+  if (dons.length === 0) return alert('出力するカンパデータがありません');
+  const rows = dons.slice().sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
+    '日付': d.date,
+    'お名前': d.name,
+    'ユーザーネーム': d.username || '',
+    '金額（円）': d.amount,
+    '受取方法': d.method || '',
+    '受取者': d.recipient || '',
+    'メモ': d.memo || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.sheet_add_aoa(ws, [['合計', '', '', dons.reduce((s, d) => s + d.amount, 0), '', '', '']], { origin: -1 });
+  ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 24 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'カンパ一覧');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `カンパ一覧_${proj ? proj.name : ''}_${dateStr}.xlsx`);
 }
 
 // ===== 予算 =====
