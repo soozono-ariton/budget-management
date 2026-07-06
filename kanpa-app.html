@@ -171,9 +171,8 @@
       <span id="roomName" style="font-size:13px; color:var(--muted)"></span>
       <button class="btn secondary" style="padding:6px 10px; font-size:12px" onclick="leaveRoom()">部屋を出る</button>
     </div>
-    <div class="project-bar">
+    <div class="project-bar" id="projectBar">
       <select id="projectSelect"></select>
-      <button class="btn secondary" onclick="addProject()">＋ 新しい企画</button>
     </div>
 
     <div class="summary">
@@ -248,7 +247,10 @@
         <h2>経費を登録</h2>
         <form onsubmit="return addExpense(event)">
           <div class="grid2">
-            <div class="row"><label>項目（予算の項目から選択・自由入力も可）</label><input id="eName" list="budgetNameList" required placeholder="例：フラワースタンド代"><datalist id="budgetNameList"></datalist></div>
+            <div class="row"><label>項目</label>
+              <select id="eNameSelect" onchange="toggleExpenseOther()"></select>
+              <input id="eNameOther" placeholder="項目名を入力" style="display:none; margin-top:8px">
+            </div>
             <div class="row"><label>金額（円）</label><input id="eAmount" type="number" min="1" required placeholder="15000"></div>
           </div>
           <div class="grid2">
@@ -356,14 +358,11 @@ async function loadAll() {
   render();
 }
 
-// ===== 企画 =====
-async function addProject() {
-  const name = prompt('新しい企画名を入力してください');
-  if (!name) return;
-  const { data, error } = await db.rpc('room_add_project', { rid: state.room.id, p_pass: state.room.pass, pname: name });
-  if (error) return alert('登録に失敗しました: ' + error.message);
-  state.currentProject = data;
-  await loadAll();
+// ===== 経費フォームの項目欄（予算から選択／その他） =====
+function toggleExpenseOther() {
+  const sel = document.getElementById('eNameSelect');
+  document.getElementById('eNameOther').style.display =
+    (sel.style.display === 'none' || sel.value === '__other') ? '' : 'none';
 }
 
 // ===== カンパ =====
@@ -391,11 +390,15 @@ async function addDonation(ev) {
 // ===== 経費 =====
 async function addExpense(ev) {
   ev.preventDefault();
+  const sel = document.getElementById('eNameSelect');
+  const other = document.getElementById('eNameOther');
+  const itemName = (sel.style.display === 'none' || sel.value === '__other') ? other.value.trim() : sel.value;
+  if (!itemName) return alert('項目を選択または入力してください'), false;
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
   const { error } = await db.rpc('room_add_expense', {
     rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
-    pname: eName.value.trim(),
+    pname: itemName,
     pamount: +eAmount.value,
     phandler: eHandler.value.trim(),
     pmemo: eMemo.value.trim(),
@@ -492,8 +495,10 @@ function switchTab(tab) {
 function render() {
   const sel = document.getElementById('projectSelect');
   sel.innerHTML = state.projects.map(p =>
-    `<option value="${p.id}" ${p.id === state.currentProject ? 'selected' : ''}>${p.name}</option>`).join('');
+    `<option value="${p.id}" ${p.id === state.currentProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   sel.onchange = () => { state.currentProject = sel.value; render(); };
+  // 企画が1つだけの部屋では選択欄を出さない
+  document.getElementById('projectBar').style.display = state.projects.length > 1 ? '' : 'none';
 
   const dons = state.donations.filter(d => d.project_id === state.currentProject);
   const exps = state.expenses.filter(d => d.project_id === state.currentProject);
@@ -523,9 +528,18 @@ function render() {
 
   // 予算一覧と予算vs経費
   const buds = state.budgets.filter(b => b.project_id === state.currentProject);
-  // 経費登録の項目サジェスト（予算の項目名）
-  document.getElementById('budgetNameList').innerHTML =
-    buds.map(b => `<option value="${esc(b.name)}"></option>`).join('');
+  // 経費登録の項目プルダウン（予算の項目＋その他）
+  const eSel = document.getElementById('eNameSelect');
+  const prevChoice = eSel.value;
+  if (buds.length === 0) {
+    eSel.style.display = 'none';
+  } else {
+    eSel.style.display = '';
+    eSel.innerHTML = buds.map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('')
+      + '<option value="__other">その他（直接入力）</option>';
+    if ([...eSel.options].some(o => o.value === prevChoice)) eSel.value = prevChoice;
+  }
+  toggleExpenseOther();
   const sumBudget = buds.reduce((s, b) => s + b.amount, 0);
   document.getElementById('budgetList').innerHTML = buds.length === 0
     ? '<div class="empty">まだ登録がありません</div>'
