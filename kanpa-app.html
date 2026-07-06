@@ -193,7 +193,7 @@
         <h2>経費を登録</h2>
         <form onsubmit="return addExpense(event)">
           <div class="grid2">
-            <div class="row"><label>項目</label><input id="eName" required placeholder="例：フラワースタンド代"></div>
+            <div class="row"><label>項目（予算の項目から選択・自由入力も可）</label><input id="eName" list="budgetNameList" required placeholder="例：フラワースタンド代"><datalist id="budgetNameList"></datalist></div>
             <div class="row"><label>金額（円）</label><input id="eAmount" type="number" min="1" required placeholder="15000"></div>
           </div>
           <div class="grid2">
@@ -443,6 +443,9 @@ function render() {
 
   // 予算一覧と予算vs経費
   const buds = state.budgets.filter(b => b.project_id === state.currentProject);
+  // 経費登録の項目サジェスト（予算の項目名）
+  document.getElementById('budgetNameList').innerHTML =
+    buds.map(b => `<option value="${esc(b.name)}"></option>`).join('');
   const sumBudget = buds.reduce((s, b) => s + b.amount, 0);
   document.getElementById('budgetList').innerHTML = buds.length === 0
     ? '<div class="empty">まだ登録がありません</div>'
