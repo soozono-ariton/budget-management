@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>カンパ管理</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --primary: #e05297;
@@ -88,7 +89,9 @@
   .item:last-child { border-bottom: none; }
   .item .info .name { font-weight: 600; font-size: 14px; }
   .item .info .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; }
+  .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; min-width: 100px; text-align: right; font-variant-numeric: tabular-nums; }
+  .item .del { width: 28px; flex-shrink: 0; }
+  .item .info { flex: 1; min-width: 0; }
   .amount.in { color: var(--green); }
   .amount.out { color: var(--red); }
   .del { background: none; border: none; color: #c4c4cc; font-size: 16px; cursor: pointer; padding: 4px; }
@@ -103,6 +106,40 @@
   .bar-fill.expense { background: #f59e0b; }
 
   .note { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0 20px; }
+
+  /* ===== スマホ対応 ===== */
+  @media (max-width: 480px) {
+    .container { padding: 10px; }
+    header { padding: 12px 16px; }
+    header h1 { font-size: 16px; }
+
+    /* 入力欄を1列に（縦積み） */
+    .grid2 { grid-template-columns: 1fr; gap: 0; }
+
+    /* iOSで入力時に画面が拡大されるのを防ぐ（16px以上必須） */
+    input, select, textarea { font-size: 16px; padding: 12px; }
+
+    /* サマリーカードをコンパクトに */
+    .summary { gap: 6px; }
+    .summary .card { padding: 10px 4px; }
+    .summary .label { font-size: 10px; }
+    .summary .value { font-size: 15px; }
+
+    /* タブを指で押しやすく */
+    .tabs button { font-size: 11px; padding: 12px 2px; }
+
+    /* 企画セレクタを縦に */
+    .project-bar { flex-direction: column; align-items: stretch; }
+    .project-bar .btn { width: 100%; }
+
+    /* 一覧の金額列 */
+    .item .amount { min-width: 80px; font-size: 14px; }
+    .item .info .name { font-size: 13px; }
+    .item .info .meta { font-size: 11px; }
+
+    /* ボタンを押しやすいサイズに */
+    .btn { padding: 12px 16px; }
+  }
 </style>
 </head>
 <body>
@@ -118,7 +155,22 @@
     Supabaseの「Project Settings → API」に表示される値を貼り付けて保存してください。
   </div>
 
+  <div id="roomGate" style="display:none">
+    <div class="card" style="margin-top:20px">
+      <h2>🔑 部屋に入る</h2>
+      <p style="font-size:13px; color:var(--muted); margin-bottom:14px">グループごとに「部屋」を分けて管理します。部屋名と合言葉を入力してください。合言葉が合わないと部屋の中身は見られません。</p>
+      <div class="row"><label>部屋名</label><input id="rName" placeholder="例：〇〇ちゃん応援団"></div>
+      <div class="row"><label>合言葉</label><input id="rPass" type="password" placeholder="合言葉"></div>
+      <button class="btn" style="width:100%; margin-bottom:8px" onclick="openRoom(false)">入室する</button>
+      <button class="btn secondary" style="width:100%" onclick="openRoom(true)">新しい部屋を作る</button>
+    </div>
+  </div>
+
   <div id="app" style="display:none">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+      <span id="roomName" style="font-size:13px; color:var(--muted)"></span>
+      <button class="btn secondary" style="padding:6px 10px; font-size:12px" onclick="leaveRoom()">部屋を出る</button>
+    </div>
     <div class="project-bar">
       <select id="projectSelect"></select>
       <button class="btn secondary" onclick="addProject()">＋ 新しい企画</button>
@@ -132,6 +184,7 @@
 
     <div class="tabs">
       <button id="tab-kanpa" class="active" onclick="switchTab('kanpa')">💰 カンパ登録</button>
+      <button id="tab-yosan" onclick="switchTab('yosan')">📋 予算登録</button>
       <button id="tab-keihi" onclick="switchTab('keihi')">🧾 経費登録</button>
       <button id="tab-report" onclick="switchTab('report')">📊 集計</button>
     </div>
@@ -142,18 +195,51 @@
         <form onsubmit="return addDonation(event)">
           <div class="grid2">
             <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
+            <div class="row"><label>ユーザーネーム</label><input id="dUsername" placeholder="例：@mikan_123"></div>
+          </div>
+          <div class="grid2">
             <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
+            <div class="row"><label>受取方法</label>
+              <select id="dMethod">
+                <option value="現金">現金</option>
+                <option value="PayPay">PayPay</option>
+                <option value="オンライン">オンライン</option>
+              </select>
+            </div>
           </div>
           <div class="grid2">
             <div class="row"><label>日付</label><input id="dDate" type="date"></div>
-            <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
+            <div class="row"><label>受取者</label><input id="dRecipient" placeholder="例：主催たろう"></div>
           </div>
+          <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
           <button class="btn" style="width:100%">登録する</button>
         </form>
       </div>
       <div class="card">
-        <h2>カンパ一覧</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+          <h2 style="margin-bottom:0">カンパ一覧</h2>
+          <button class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="exportDonations()">📥 Excel出力</button>
+        </div>
         <div id="donationList"></div>
+      </div>
+    </div>
+
+    <div id="panel-yosan" style="display:none">
+      <div class="card">
+        <h2>予算を登録</h2>
+        <form onsubmit="return addBudget(event)">
+          <div class="grid2">
+            <div class="row"><label>項目</label><input id="bName" required placeholder="例：フラワースタンド代"></div>
+            <div class="row"><label>予算額（円）</label><input id="bAmount" type="number" min="1" required placeholder="20000"></div>
+          </div>
+          <div class="row"><label>メモ</label><input id="bMemo" placeholder="任意"></div>
+          <button class="btn" style="width:100%">登録する</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>予算一覧</h2>
+        <div id="budgetList"></div>
+        <div id="budgetSummary"></div>
       </div>
     </div>
 
@@ -162,13 +248,14 @@
         <h2>経費を登録</h2>
         <form onsubmit="return addExpense(event)">
           <div class="grid2">
-            <div class="row"><label>項目</label><input id="eName" required placeholder="例：フラワースタンド代"></div>
+            <div class="row"><label>項目（予算の項目から選択・自由入力も可）</label><input id="eName" list="budgetNameList" required placeholder="例：フラワースタンド代"><datalist id="budgetNameList"></datalist></div>
             <div class="row"><label>金額（円）</label><input id="eAmount" type="number" min="1" required placeholder="15000"></div>
           </div>
           <div class="grid2">
             <div class="row"><label>日付</label><input id="eDate" type="date"></div>
-            <div class="row"><label>メモ</label><input id="eMemo" placeholder="任意"></div>
+            <div class="row"><label>対応者</label><input id="eHandler" placeholder="例：主催たろう"></div>
           </div>
+          <div class="row"><label>メモ</label><input id="eMemo" placeholder="任意"></div>
           <button class="btn" style="width:100%">登録する</button>
         </form>
       </div>
@@ -180,8 +267,18 @@
 
     <div id="panel-report" style="display:none">
       <div class="card">
-        <h2>カンパ内訳（人別）</h2>
-        <div id="donorChart"></div>
+        <h2>🎯 目標金額と進捗</h2>
+        <form onsubmit="return saveGoal(event)">
+          <div class="row" style="display:flex; gap:8px; align-items:center">
+            <input id="goalAmount" type="number" min="0" placeholder="目標金額（円）" style="flex:1">
+            <button class="btn secondary" style="white-space:nowrap">保存</button>
+          </div>
+        </form>
+        <div id="goalProgress"></div>
+      </div>
+      <div class="card">
+        <h2>受け取り方法別</h2>
+        <div id="methodChart"></div>
       </div>
       <div class="card">
         <h2>経費内訳</h2>
@@ -205,31 +302,55 @@
 //   SUPABASE_URL      … 「Project URL」（https://xxxx.supabase.co）
 //   SUPABASE_ANON_KEY … 「anon public」キー（長い文字列）
 // ============================================================
-const SUPABASE_URL = 'ここにProject URLを貼る';
-const SUPABASE_ANON_KEY = 'ここにanon publicキーを貼る';
+const SUPABASE_URL = 'https://nnfhdlsqrihazwvoqkoz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_DqqFbNN1o_rHv79Kzq83dw_9WqDEOMR';
 // ============================================================
 
 const configured = SUPABASE_URL.startsWith('https://');
 let db = null;
 
-const state = { projects: [], donations: [], expenses: [], currentProject: null, tab: 'kanpa' };
+const state = { projects: [], donations: [], expenses: [], budgets: [], currentProject: null, tab: 'kanpa', room: null };
 const yen = n => '¥' + n.toLocaleString('ja-JP');
+
+// ===== 部屋（合言葉）管理 =====
+const ROOM_KEY = 'kanpa_room';
+
+async function openRoom(create) {
+  const name = document.getElementById('rName').value.trim();
+  const pass = document.getElementById('rPass').value;
+  if (!name || !pass) return alert('部屋名と合言葉を入力してください');
+  const fn = create ? 'create_room' : 'open_room';
+  const { data, error } = await db.rpc(fn, { p_name: name, p_pass: pass });
+  if (error) return alert('エラー: ' + error.message);
+  if (!data) return alert(create ? 'その部屋名はすでに使われています' : '部屋名か合言葉が違います');
+  state.room = { id: data, pass, name };
+  localStorage.setItem(ROOM_KEY, JSON.stringify(state.room));
+  showApp();
+}
+
+function leaveRoom() {
+  localStorage.removeItem(ROOM_KEY);
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById('roomGate').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('roomName').textContent = '部屋: ' + state.room.name;
+  document.getElementById('loadingMsg').style.display = '';
+  loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
+}
 
 // ===== データ読み込み =====
 async function loadAll() {
-  const [p, d, e] = await Promise.all([
-    db.from('projects').select('*').order('created_at'),
-    db.from('donations').select('*').order('date', { ascending: false }),
-    db.from('expenses').select('*').order('date', { ascending: false }),
-  ]);
-  if (p.error || d.error || e.error) {
-    alert('データの読み込みに失敗しました: ' + (p.error || d.error || e.error).message);
-    return;
-  }
-  state.projects = p.data;
-  state.donations = d.data;
-  state.expenses = e.data;
-  if (!state.currentProject && state.projects.length > 0) {
+  const { data, error } = await db.rpc('room_data', { rid: state.room.id, p_pass: state.room.pass });
+  if (error) return alert('データの読み込みに失敗しました: ' + error.message);
+  if (!data) { alert('部屋名か合言葉が違います'); return leaveRoom(); }
+  state.projects = data.projects;
+  state.donations = data.donations;
+  state.expenses = data.expenses;
+  state.budgets = data.budgets;
+  if ((!state.currentProject || !state.projects.some(p => p.id === state.currentProject)) && state.projects.length > 0) {
     state.currentProject = state.projects[0].id;
   }
   render();
@@ -239,9 +360,9 @@ async function loadAll() {
 async function addProject() {
   const name = prompt('新しい企画名を入力してください');
   if (!name) return;
-  const { data, error } = await db.from('projects').insert({ name }).select().single();
+  const { data, error } = await db.rpc('room_add_project', { rid: state.room.id, p_pass: state.room.pass, pname: name });
   if (error) return alert('登録に失敗しました: ' + error.message);
-  state.currentProject = data.id;
+  state.currentProject = data;
   await loadAll();
 }
 
@@ -250,14 +371,16 @@ async function addDonation(ev) {
   ev.preventDefault();
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
-  const row = {
-    project_id: state.currentProject,
-    name: dName.value.trim(),
-    amount: +dAmount.value,
-    memo: dMemo.value.trim(),
-  };
-  if (dDate.value) row.date = dDate.value;
-  const { error } = await db.from('donations').insert(row);
+  const { error } = await db.rpc('room_add_donation', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: dName.value.trim(),
+    pusername: dUsername.value.trim(),
+    pamount: +dAmount.value,
+    pmethod: dMethod.value,
+    precipient: dRecipient.value.trim(),
+    pmemo: dMemo.value.trim(),
+    pdate: dDate.value || null,
+  });
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
   ev.target.reset();
@@ -270,14 +393,14 @@ async function addExpense(ev) {
   ev.preventDefault();
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
-  const row = {
-    project_id: state.currentProject,
-    name: eName.value.trim(),
-    amount: +eAmount.value,
-    memo: eMemo.value.trim(),
-  };
-  if (eDate.value) row.date = eDate.value;
-  const { error } = await db.from('expenses').insert(row);
+  const { error } = await db.rpc('room_add_expense', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: eName.value.trim(),
+    pamount: +eAmount.value,
+    phandler: eHandler.value.trim(),
+    pmemo: eMemo.value.trim(),
+    pdate: eDate.value || null,
+  });
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
   ev.target.reset();
@@ -285,24 +408,81 @@ async function addExpense(ev) {
   return false;
 }
 
+// ===== カンパ一覧のExcel出力 =====
+function exportDonations() {
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  const dons = state.donations.filter(d => d.project_id === state.currentProject);
+  if (dons.length === 0) return alert('出力するカンパデータがありません');
+  const rows = dons.slice().sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
+    '日付': d.date,
+    'お名前': d.name,
+    'ユーザーネーム': d.username || '',
+    '金額（円）': d.amount,
+    '受取方法': d.method || '',
+    '受取者': d.recipient || '',
+    'メモ': d.memo || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.sheet_add_aoa(ws, [['合計', '', '', dons.reduce((s, d) => s + d.amount, 0), '', '', '']], { origin: -1 });
+  ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 24 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'カンパ一覧');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `カンパ一覧_${proj ? proj.name : ''}_${dateStr}.xlsx`);
+}
+
+// ===== 予算 =====
+async function addBudget(ev) {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const { error } = await db.rpc('room_add_budget', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: bName.value.trim(),
+    pamount: +bAmount.value,
+    pmemo: bMemo.value.trim(),
+  });
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+async function delBudget(id) {
+  if (!confirm('この予算項目を削除しますか？')) return;
+  const { error } = await db.rpc('room_del_budget', { rid: state.room.id, p_pass: state.room.pass, bid: id });
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+
 // ===== 削除 =====
 async function delDonation(id) {
   if (!confirm('このカンパ記録を削除しますか？')) return;
-  const { error } = await db.from('donations').delete().eq('id', id);
+  const { error } = await db.rpc('room_del_donation', { rid: state.room.id, p_pass: state.room.pass, did: id });
   if (error) return alert('削除に失敗しました: ' + error.message);
   await loadAll();
 }
 async function delExpense(id) {
   if (!confirm('この経費記録を削除しますか？')) return;
-  const { error } = await db.from('expenses').delete().eq('id', id);
+  const { error } = await db.rpc('room_del_expense', { rid: state.room.id, p_pass: state.room.pass, eid: id });
   if (error) return alert('削除に失敗しました: ' + error.message);
   await loadAll();
+}
+
+// ===== 目標金額 =====
+async function saveGoal(ev) {
+  ev.preventDefault();
+  const goal = +document.getElementById('goalAmount').value || 0;
+  const { error } = await db.rpc('room_set_goal', { rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject, goal: goal });
+  if (error) return alert('保存に失敗しました: ' + error.message);
+  await loadAll();
+  return false;
 }
 
 // ===== タブ =====
 function switchTab(tab) {
   state.tab = tab;
-  ['kanpa', 'keihi', 'report'].forEach(t => {
+  ['kanpa', 'yosan', 'keihi', 'report'].forEach(t => {
     document.getElementById('panel-' + t).style.display = t === tab ? '' : 'none';
     document.getElementById('tab-' + t).classList.toggle('active', t === tab);
   });
@@ -332,7 +512,7 @@ function render() {
       <div class="item">
         <div class="info">
           <div class="name">${esc(d.name)}</div>
-          <div class="meta">${d.date}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
+          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.recipient ? ' ・ 受取:' + esc(d.recipient) : ''}${d.handler ? ' ・ 対応:' + esc(d.handler) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
         </div>
         <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
         <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
@@ -341,16 +521,56 @@ function render() {
   document.getElementById('donationList').innerHTML = list(dons, 'in', 'delDonation');
   document.getElementById('expenseList').innerHTML = list(exps, 'out', 'delExpense');
 
-  const byDonor = {};
-  dons.forEach(d => byDonor[d.name] = (byDonor[d.name] || 0) + d.amount);
-  const donorEntries = Object.entries(byDonor).sort((a, b) => b[1] - a[1]);
-  const maxD = donorEntries[0]?.[1] || 1;
-  document.getElementById('donorChart').innerHTML = donorEntries.length === 0
+  // 予算一覧と予算vs経費
+  const buds = state.budgets.filter(b => b.project_id === state.currentProject);
+  // 経費登録の項目サジェスト（予算の項目名）
+  document.getElementById('budgetNameList').innerHTML =
+    buds.map(b => `<option value="${esc(b.name)}"></option>`).join('');
+  const sumBudget = buds.reduce((s, b) => s + b.amount, 0);
+  document.getElementById('budgetList').innerHTML = buds.length === 0
+    ? '<div class="empty">まだ登録がありません</div>'
+    : buds.map(b => `
+      <div class="item">
+        <div class="info">
+          <div class="name">${esc(b.name)}</div>
+          <div class="meta">${b.memo ? esc(b.memo) : ''}</div>
+        </div>
+        <div class="amount">${yen(b.amount)}</div>
+        <button class="del" onclick="delBudget('${b.id}')" title="削除">✕</button>
+      </div>`).join('');
+  document.getElementById('budgetSummary').innerHTML = buds.length === 0 ? '' : `
+    <div style="border-top:1px solid var(--border); margin-top:8px; padding-top:12px; font-size:13px; display:flex; justify-content:space-between">
+      <span style="color:var(--muted)">予算合計 <strong style="color:var(--text)">${yen(sumBudget)}</strong> ／ 経費合計 <strong style="color:var(--text)">${yen(sumOut)}</strong></span>
+      <strong style="color:${sumOut <= sumBudget ? 'var(--green)' : 'var(--red)'}">${sumOut <= sumBudget ? '残り ' + yen(sumBudget - sumOut) : '超過 ' + yen(sumOut - sumBudget)}</strong>
+    </div>`;
+
+  // 目標金額と進捗
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  const goal = proj?.goal_amount || 0;
+  document.getElementById('goalAmount').value = goal || '';
+  const pct = goal > 0 ? Math.round(sumIn / goal * 100) : 0;
+  document.getElementById('goalProgress').innerHTML = goal > 0
+    ? `<div style="display:flex; justify-content:space-between; align-items:baseline; margin:14px 0 6px">
+         <span style="font-size:26px; font-weight:700; color:${pct >= 100 ? 'var(--green)' : 'var(--primary)'}">${pct}%</span>
+         <span style="font-size:13px; color:var(--muted)">${yen(sumIn)} / ${yen(goal)}</span>
+       </div>
+       <div class="bar-track" style="height:16px">
+         <div class="bar-fill" style="width:${Math.min(pct, 100)}%; background:${pct >= 100 ? 'var(--green)' : 'var(--primary)'}"></div>
+       </div>
+       <p style="font-size:12px; color:var(--muted); margin-top:8px">${pct >= 100 ? '🎉 目標達成！' : 'あと ' + yen(goal - sumIn)}</p>`
+    : '<p style="font-size:13px; color:var(--muted); margin-top:10px">目標金額を設定すると、達成率がここに表示されます。</p>';
+
+  // 受け取り方法別
+  const byMethod = {};
+  dons.forEach(d => { const m = d.method || 'その他'; byMethod[m] = (byMethod[m] || 0) + d.amount; });
+  const methodEntries = Object.entries(byMethod).sort((a, b) => b[1] - a[1]);
+  const maxM = methodEntries[0]?.[1] || 1;
+  document.getElementById('methodChart').innerHTML = methodEntries.length === 0
     ? '<div class="empty">データなし</div>'
-    : donorEntries.map(([name, amt]) => `
+    : methodEntries.map(([m, amt]) => `
       <div class="bar-row">
-        <div class="bar-label"><span>${esc(name)}</span><strong>${yen(amt)}</strong></div>
-        <div class="bar-track"><div class="bar-fill" style="width:${amt / maxD * 100}%"></div></div>
+        <div class="bar-label"><span>${esc(m)}</span><strong>${yen(amt)}</strong></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${amt / maxM * 100}%"></div></div>
       </div>`).join('');
 
   const maxE = Math.max(...exps.map(e => e.amount), 1);
@@ -382,9 +602,13 @@ if (!configured) {
   document.getElementById('setupWarning').style.display = '';
 } else {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  document.getElementById('app').style.display = '';
-  document.getElementById('loadingMsg').style.display = '';
-  loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
+  const savedRoom = localStorage.getItem(ROOM_KEY);
+  if (savedRoom) {
+    state.room = JSON.parse(savedRoom);
+    showApp();
+  } else {
+    document.getElementById('roomGate').style.display = '';
+  }
 }
 </script>
 </body>
