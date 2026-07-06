@@ -106,6 +106,40 @@
   .bar-fill.expense { background: #f59e0b; }
 
   .note { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0 20px; }
+
+  /* ===== スマホ対応 ===== */
+  @media (max-width: 480px) {
+    .container { padding: 10px; }
+    header { padding: 12px 16px; }
+    header h1 { font-size: 16px; }
+
+    /* 入力欄を1列に（縦積み） */
+    .grid2 { grid-template-columns: 1fr; gap: 0; }
+
+    /* iOSで入力時に画面が拡大されるのを防ぐ（16px以上必須） */
+    input, select, textarea { font-size: 16px; padding: 12px; }
+
+    /* サマリーカードをコンパクトに */
+    .summary { gap: 6px; }
+    .summary .card { padding: 10px 4px; }
+    .summary .label { font-size: 10px; }
+    .summary .value { font-size: 15px; }
+
+    /* タブを指で押しやすく */
+    .tabs button { font-size: 11px; padding: 12px 2px; }
+
+    /* 企画セレクタを縦に */
+    .project-bar { flex-direction: column; align-items: stretch; }
+    .project-bar .btn { width: 100%; }
+
+    /* 一覧の金額列 */
+    .item .amount { min-width: 80px; font-size: 14px; }
+    .item .info .name { font-size: 13px; }
+    .item .info .meta { font-size: 11px; }
+
+    /* ボタンを押しやすいサイズに */
+    .btn { padding: 12px 16px; }
+  }
 </style>
 </head>
 <body>
