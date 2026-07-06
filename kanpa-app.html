@@ -88,7 +88,9 @@
   .item:last-child { border-bottom: none; }
   .item .info .name { font-weight: 600; font-size: 14px; }
   .item .info .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; }
+  .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; min-width: 100px; text-align: right; font-variant-numeric: tabular-nums; }
+  .item .del { width: 28px; flex-shrink: 0; }
+  .item .info { flex: 1; min-width: 0; }
   .amount.in { color: var(--green); }
   .amount.out { color: var(--red); }
   .del { background: none; border: none; color: #c4c4cc; font-size: 16px; cursor: pointer; padding: 4px; }
@@ -256,24 +258,6 @@ let db = null;
 const state = { projects: [], donations: [], expenses: [], budgets: [], currentProject: null, tab: 'kanpa' };
 const yen = n => '¥' + n.toLocaleString('ja-JP');
 
-// ===== 前回入力した名前・ユーザーネームをこの端末に記憶して自動入力 =====
-const PROFILE_KEY = 'kanpa_profile';
-
-function loadProfile() {
-  try {
-    const p = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
-    if (p.name) dName.value = p.name;
-    if (p.username) dUsername.value = p.username;
-  } catch (e) { /* 無視 */ }
-}
-
-function saveProfile() {
-  localStorage.setItem(PROFILE_KEY, JSON.stringify({
-    name: dName.value.trim(),
-    username: dUsername.value.trim(),
-  }));
-}
-
 // ===== データ読み込み =====
 async function loadAll() {
   const [p, d, e, b] = await Promise.all([
@@ -324,9 +308,7 @@ async function addDonation(ev) {
   const { error } = await db.from('donations').insert(row);
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
-  saveProfile();
   ev.target.reset();
-  loadProfile();
   await loadAll();
   return false;
 }
@@ -524,7 +506,6 @@ if (!configured) {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   document.getElementById('app').style.display = '';
   document.getElementById('loadingMsg').style.display = '';
-  loadProfile();
   loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
 }
 </script>
