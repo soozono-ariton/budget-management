@@ -533,14 +533,15 @@ function render() {
 
   // 予算一覧と予算vs経費
   const buds = state.budgets.filter(b => b.project_id === state.currentProject);
-  // 経費登録の項目プルダウン（予算の項目＋その他）
+  // 経費登録の項目プルダウン（予算の項目＋過去の経費項目＋その他）
   const eSel = document.getElementById('eNameSelect');
   const prevChoice = eSel.value;
-  if (buds.length === 0) {
+  const itemNames = [...new Set([...buds.map(b => b.name), ...exps.map(e => e.name)])];
+  if (itemNames.length === 0) {
     eSel.style.display = 'none';
   } else {
     eSel.style.display = '';
-    eSel.innerHTML = buds.map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('')
+    eSel.innerHTML = itemNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
       + '<option value="__other">その他（直接入力）</option>';
     if ([...eSel.options].some(o => o.value === prevChoice)) eSel.value = prevChoice;
   }
