@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>カンパ管理</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#0e1015">
+<meta name="apple-mobile-web-app-title" content="カンパ管理">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --accent: #e05297;
+    --bg: #0e1015;
+    --card: #171a21;
+    --card2: #10131a;
+    --text: #e8eaf0;
+    --muted: #8b90a0;
+    --border: #262a35;
+    --green: #34d399;
+    --red: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, system-ui, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+
+  /* ===== ヘッダー ===== */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 18px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  header .brand { font-size: 15px; font-weight: 800; letter-spacing: .02em; }
+  header .brand .dot { color: var(--accent); }
+  header .room-info { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .icon-btn {
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 7px 10px; font-size: 12px; cursor: pointer;
+  }
+
+  /* ===== 推しカラー ===== */
+  .color-pop {
+    position: absolute; top: 54px; right: 14px; z-index: 30;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 12px; display: none; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  }
+  .color-pop.open { display: block; }
+  .color-pop .title { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+  .swatches { display: grid; grid-template-columns: repeat(5, 30px); gap: 8px; }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid transparent;
+  }
+  .swatch.active { border-color: #fff; }
+
+  .container { max-width: 640px; margin: 0 auto; padding: 16px 16px 96px; }
+
+  /* ===== カード ===== */
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+    padding: 18px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 14px; font-weight: 700; margin-bottom: 14px; color: var(--text); }
+
+  /* ===== ヒーロー（リング進捗） ===== */
+  .hero { display: flex; align-items: center; gap: 20px; }
+  .ring-wrap { position: relative; width: 128px; height: 128px; flex-shrink: 0; }
+  .ring-wrap svg { width: 128px; height: 128px; }
+  .ring-bg { fill: none; stroke: var(--border); stroke-width: 10; }
+  .ring-fg {
+    fill: none; stroke: var(--accent); stroke-width: 10; stroke-linecap: round;
+    transition: stroke-dashoffset .6s ease;
+  }
+  .ring-center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  .ring-center strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+  .ring-center small { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .hero-stats { flex: 1; min-width: 0; }
+  .hero-stats .label { font-size: 11px; color: var(--muted); letter-spacing: .06em; }
+  .hero-stats .sum { font-size: 30px; font-weight: 800; color: var(--green); line-height: 1.25; font-variant-numeric: tabular-nums; }
+  .hero-stats .goal { font-size: 15px; font-weight: 600; color: var(--text); margin-top: 10px; font-variant-numeric: tabular-nums; }
+
+  /* ===== フォーム ===== */
+  .row { margin-bottom: 14px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 12px 14px; font-size: 16px; font-family: inherit;
+    background: var(--card2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px;
+    appearance: none;
+  }
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b90a0' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  input::placeholder { color: #565b6b; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 480px) { .grid2 { grid-template-columns: 1fr; gap: 0; } }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 13px 18px; font-size: 15px; font-weight: 700; font-family: inherit;
+    background: var(--accent); color: #fff; border: none; border-radius: 12px; cursor: pointer;
+    transition: filter .15s;
+  }
+  .btn:active { filter: brightness(.85); }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+  .btn.small { padding: 8px 12px; font-size: 12px; border-radius: 10px; }
+
+  /* ===== リスト ===== */
+  .item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px;
+  }
+  .item:last-child { border-bottom: none; }
+  .item .info { flex: 1; min-width: 0; }
+  .item .info .name { font-weight: 700; font-size: 14px; }
+  .item .info .meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; min-width: 100px; text-align: right; font-variant-numeric: tabular-nums; }
+  .amount.in { color: var(--green); }
+  .amount.out { color: var(--red); }
+  .del { background: none; border: none; color: #4a4f5e; font-size: 15px; cursor: pointer; padding: 6px; width: 28px; flex-shrink: 0; }
+  .del:hover { color: var(--red); }
+  .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 26px 0; }
+
+  /* ===== 集計一覧 ===== */
+  .stat-row { display: flex; justify-content: space-between; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .stat-amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-row .stat-pct { display: inline-block; min-width: 44px; text-align: right; font-size: 12px; color: var(--muted); margin-left: 10px; font-variant-numeric: tabular-nums; }
+  .stat-row.total { border-top: 2px solid var(--border); border-bottom: none; margin-top: 2px; }
+  .stat-row.total span:first-child { color: var(--muted); font-size: 13px; }
+
+  .bar-track { background: var(--card2); border-radius: 8px; height: 12px; overflow: hidden; border: 1px solid var(--border); }
+  .bar-fill { height: 100%; border-radius: 8px; background: var(--accent); transition: width .4s; }
+
+  /* ===== 下部ナビ ===== */
+  nav.bottom {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    display: flex; justify-content: space-around;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  }
+  nav.bottom button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 700; font-family: inherit;
+    padding: 6px 14px; border-radius: 12px; flex: 1; max-width: 120px;
+  }
+  nav.bottom button svg { width: 22px; height: 22px; stroke: currentColor; }
+  nav.bottom button.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+  /* ===== 入室画面 ===== */
+  .gate-wrap { max-width: 420px; margin: 0 auto; padding: 40px 20px; }
+  .gate-logo { text-align: center; margin-bottom: 24px; }
+  .gate-logo .mark {
+    width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 12px;
+    background: var(--accent); display: flex; align-items: center; justify-content: center;
+    font-size: 30px; font-weight: 800; color: #fff;
+  }
+  .gate-logo h1 { font-size: 20px; font-weight: 800; }
+  .gate-logo p { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.7; }
+
+  .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .section-head h2 { margin-bottom: 0; }
+  .note { font-size: 11px; color: var(--muted); text-align: center; padding: 10px 0 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">カンパ管理<span class="dot">.</span></div>
+  <div class="room-info">
+    <span id="roomName"></span>
+    <button class="icon-btn" id="colorBtn" onclick="toggleColorPop()" title="推しカラー">🎨</button>
+    <button class="icon-btn" id="leaveBtn" onclick="leaveRoom()" style="display:none">退室</button>
+  </div>
+</header>
+
+<div class="color-pop" id="colorPop">
+  <div class="title">推しカラーを選ぶ</div>
+  <div class="swatches" id="swatches"></div>
+</div>
+
+<!-- 入室画面 -->
+<div id="roomGate" class="gate-wrap" style="display:none">
+  <div class="gate-logo">
+    <div class="mark">¥</div>
+    <h1>部屋に入る</h1>
+    <p>グループごとに「部屋」を分けて管理します。<br>合言葉が合わないと部屋の中身は見られません。</p>
+  </div>
+  <div class="card">
+    <div class="row"><label>部屋名</label><input id="rName" placeholder="例：〇〇ちゃん応援団"></div>
+    <div class="row"><label>合言葉</label><input id="rPass" type="password" placeholder="合言葉"></div>
+    <button class="btn" style="width:100%; margin-bottom:10px" onclick="openRoom(false)">入室する</button>
+    <button class="btn ghost" style="width:100%" onclick="openRoom(true)">新しい部屋を作る</button>
+  </div>
+  <p class="note">データはクラウドDBに保存されます。</p>
+</div>
+
+<!-- アプリ本体 -->
+<div id="app" class="container" style="display:none">
+
+  <div class="row" id="projectBar" style="display:none">
+    <select id="projectSelect"></select>
+  </div>
+
+  <div class="card hero">
+    <div class="ring-wrap">
+      <svg viewBox="0 0 120 120">
+        <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+        <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52" transform="rotate(-90 60 60)"></circle>
+      </svg>
+      <div class="ring-center">
+        <strong id="heroPct">–</strong>
+        <small>進捗率</small>
+      </div>
+    </div>
+    <div class="hero-stats">
+      <div class="label">カンパ合計</div>
+      <div class="sum" id="heroSum">¥0</div>
+      <div class="label" style="margin-top:10px">目標金額</div>
+      <div class="goal" id="heroGoal">未設定</div>
+    </div>
+  </div>
+
+  <!-- カンパ -->
+  <div id="panel-kanpa">
+    <div class="card">
+      <h2>カンパを登録</h2>
+      <form onsubmit="return addDonation(event)">
+        <div class="grid2">
+          <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
+          <div class="row"><label>ユーザーネーム</label><input id="dUsername" placeholder="例：@mikan_123"></div>
+        </div>
+        <div class="grid2">
+          <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
+          <div class="row"><label>受取方法</label>
+            <select id="dMethod">
+              <option value="現金">現金</option>
+              <option value="PayPay">PayPay</option>
+              <option value="オンライン">オンライン</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="row"><label>日付</label><input id="dDate" type="date"></div>
+          <div class="row"><label>受取者</label><input id="dRecipient" placeholder="例：主催たろう"></div>
+        </div>
+        <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
+        <button class="btn" style="width:100%">登録する</button>
+      </form>
+    </div>
+    <div class="card">
+      <div class="section-head">
+        <h2>カンパ一覧</h2>
+        <button class="btn ghost small" onclick="exportDonations()">📥 Excel出力</button>
+      </div>
+      <div id="donationList"></div>
+    </div>
+  </div>
+
+  <!-- 予算 -->
+  <div id="panel-yosan" style="display:none">
+    <div class="card">
+      <h2>予算を登録</h2>
+      <form onsubmit="return addBudget(event)">
+        <div class="grid2">
+          <div class="row"><label>項目</label><input id="bName" required placeholder="例：フラワースタンド代"></div>
+          <div class="row"><label>予算額（円）</label><input id="bAmount" type="number" min="1" required placeholder="20000"></div>
+        </div>
+        <div class="row"><label>メモ</label><input id="bMemo" placeholder="任意"></div>
+        <button class="btn" style="width:100%">登録する</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>予算一覧</h2>
+      <div id="budgetList"></div>
+      <div id="budgetSummary"></div>
+    </div>
+  </div>
+
+  <!-- 経費 -->
+  <div id="panel-keihi" style="display:none">
+    <div class="card">
+      <h2>経費を登録</h2>
+      <form onsubmit="return addExpense(event)">
+        <div class="row"><label>項目</label>
+          <select id="eNameSelect" onchange="toggleExpenseOther()"></select>
+          <input id="eNameOther" placeholder="項目名を入力" style="display:none; margin-top:10px">
+        </div>
+        <div class="grid2">
+          <div class="row"><label>金額（円）</label><input id="eAmount" type="number" min="1" required placeholder="15000"></div>
+          <div class="row"><label>日付</label><input id="eDate" type="date"></div>
+        </div>
+        <div class="grid2">
+          <div class="row"><label>対応者</label><input id="eHandler" placeholder="例：主催たろう"></div>
+          <div class="row"><label>メモ</label><input id="eMemo" placeholder="任意"></div>
+        </div>
+        <button class="btn" style="width:100%">登録する</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>経費一覧</h2>
+      <div id="expenseList"></div>
+    </div>
+  </div>
+
+  <!-- 集計 -->
+  <div id="panel-report" style="display:none">
+    <div class="card">
+      <h2>🎯 目標金額と進捗</h2>
+      <form onsubmit="return saveGoal(event)">
+        <div class="row" style="display:flex; gap:10px; align-items:center; margin-bottom:0">
+          <input id="goalAmount" type="number" min="0" placeholder="目標金額（円）" style="flex:1">
+          <button class="btn ghost" style="white-space:nowrap">保存</button>
+        </div>
+      </form>
+      <div id="goalProgress"></div>
+    </div>
+    <div class="card">
+      <h2>受け取り方法別</h2>
+      <div id="methodChart"></div>
+    </div>
+    <div class="card">
+      <h2>経費内訳</h2>
+      <div id="expenseChart"></div>
+    </div>
+    <div class="card">
+      <h2>全企画サマリー</h2>
+      <div id="projectSummary"></div>
+    </div>
+  </div>
+
+  <div id="loadingMsg" class="empty" style="display:none">読み込み中…</div>
+</div>
+
+<!-- 下部ナビ -->
+<nav class="bottom" id="bottomNav" style="display:none">
+  <button id="tab-kanpa" class="active" onclick="switchTab('kanpa')">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 8l3 4 3-4M12 12v5M9.5 13.5h5M9.5 15.5h5"/></svg>
+    カンパ
+  </button>
+  <button id="tab-yosan" onclick="switchTab('yosan')">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
+    予算
+  </button>
+  <button id="tab-keihi" onclick="switchTab('keihi')">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z"/><path d="M9 8h6M9 12h6"/></svg>
+    経費
+  </button>
+  <button id="tab-report" onclick="switchTab('report')">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>
+    集計
+  </button>
+</nav>
+
+<script>
+const SUPABASE_URL = 'https://nnfhdlsqrihazwvoqkoz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_DqqFbNN1o_rHv79Kzq83dw_9WqDEOMR';
+
+const configured = SUPABASE_URL.startsWith('https://');
+let db = null;
+
+const state = { projects: [], donations: [], expenses: [], budgets: [], currentProject: null, tab: 'kanpa', room: null };
+const yen = n => '¥' + n.toLocaleString('ja-JP');
+
+// ===== 推しカラー =====
+const ACCENT_KEY = 'kanpa_accent';
+const PRESETS = ['#e05297', '#f43f5e', '#fb923c', '#facc15', '#4ade80', '#2dd4bf', '#38bdf8', '#818cf8', '#c084fc', '#f472b6'];
+
+function applyAccent(c) {
+  document.documentElement.style.setProperty('--accent', c);
+  localStorage.setItem(ACCENT_KEY, c);
+  document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s.dataset.c === c));
+}
+function initAccent() {
+  const saved = localStorage.getItem(ACCENT_KEY) || PRESETS[0];
+  const box = document.getElementById('swatches');
+  box.innerHTML = PRESETS.map(c => `<div class="swatch" data-c="${c}" style="background:${c}" onclick="applyAccent('${c}')"></div>`).join('');
+  applyAccent(saved);
+}
+function toggleColorPop() {
+  document.getElementById('colorPop').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#colorPop') && !e.target.closest('#colorBtn')) {
+    document.getElementById('colorPop').classList.remove('open');
+  }
+});
+
+// ===== 部屋（合言葉）管理 =====
+const ROOM_KEY = 'kanpa_room';
+
+async function openRoom(create) {
+  const name = document.getElementById('rName').value.trim();
+  const pass = document.getElementById('rPass').value;
+  if (!name || !pass) return alert('部屋名と合言葉を入力してください');
+  const fn = create ? 'create_room' : 'open_room';
+  const { data, error } = await db.rpc(fn, { p_name: name, p_pass: pass });
+  if (error) return alert('エラー: ' + error.message);
+  if (!data) return alert(create ? 'その部屋名はすでに使われています' : '部屋名か合言葉が違います');
+  state.room = { id: data, pass, name };
+  localStorage.setItem(ROOM_KEY, JSON.stringify(state.room));
+  showApp();
+}
+
+function leaveRoom() {
+  localStorage.removeItem(ROOM_KEY);
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById('roomGate').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('bottomNav').style.display = '';
+  document.getElementById('leaveBtn').style.display = '';
+  document.getElementById('roomName').textContent = state.room.name;
+  document.getElementById('loadingMsg').style.display = '';
+  loadAll().then(() => document.getElementById('loadingMsg').style.display = 'none');
+}
+
+// ===== データ読み込み =====
+async function loadAll() {
+  const { data, error } = await db.rpc('room_data', { rid: state.room.id, p_pass: state.room.pass });
+  if (error) return alert('データの読み込みに失敗しました: ' + error.message);
+  if (!data) { alert('部屋名か合言葉が違います'); return leaveRoom(); }
+  state.projects = data.projects;
+  state.donations = data.donations;
+  state.expenses = data.expenses;
+  state.budgets = data.budgets;
+  if ((!state.currentProject || !state.projects.some(p => p.id === state.currentProject)) && state.projects.length > 0) {
+    state.currentProject = state.projects[0].id;
+  }
+  render();
+}
+
+// ===== 経費フォームの項目欄 =====
+function toggleExpenseOther() {
+  const sel = document.getElementById('eNameSelect');
+  document.getElementById('eNameOther').style.display =
+    (sel.style.display === 'none' || sel.value === '__other') ? '' : 'none';
+}
+
+// ===== カンパ一覧のExcel出力 =====
+function exportDonations() {
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  const dons = state.donations.filter(d => d.project_id === state.currentProject);
+  if (dons.length === 0) return alert('出力するカンパデータがありません');
+  const rows = dons.slice().sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
+    '日付': d.date,
+    'お名前': d.name,
+    'ユーザーネーム': d.username || '',
+    '金額（円）': d.amount,
+    '受取方法': d.method || '',
+    '受取者': d.recipient || '',
+    'メモ': d.memo || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.sheet_add_aoa(ws, [['合計', '', '', dons.reduce((s, d) => s + d.amount, 0), '', '', '']], { origin: -1 });
+  ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 24 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'カンパ一覧');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `カンパ一覧_${proj ? proj.name : ''}_${dateStr}.xlsx`);
+}
+
+// ===== 予算 =====
+async function addBudget(ev) {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const { error } = await db.rpc('room_add_budget', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: bName.value.trim(),
+    pamount: +bAmount.value,
+    pmemo: bMemo.value.trim(),
+  });
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+async function delBudget(id) {
+  if (!confirm('この予算項目を削除しますか？')) return;
+  const { error } = await db.rpc('room_del_budget', { rid: state.room.id, p_pass: state.room.pass, bid: id });
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+
+// ===== カンパ =====
+async function addDonation(ev) {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const { error } = await db.rpc('room_add_donation', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: dName.value.trim(),
+    pusername: dUsername.value.trim(),
+    pamount: +dAmount.value,
+    pmethod: dMethod.value,
+    precipient: dRecipient.value.trim(),
+    pmemo: dMemo.value.trim(),
+    pdate: dDate.value || null,
+  });
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+
+// ===== 経費 =====
+async function addExpense(ev) {
+  ev.preventDefault();
+  const sel = document.getElementById('eNameSelect');
+  const other = document.getElementById('eNameOther');
+  const itemName = (sel.style.display === 'none' || sel.value === '__other') ? other.value.trim() : sel.value;
+  if (!itemName) return alert('項目を選択または入力してください'), false;
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  const { error } = await db.rpc('room_add_expense', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pname: itemName,
+    pamount: +eAmount.value,
+    phandler: eHandler.value.trim(),
+    pmemo: eMemo.value.trim(),
+    pdate: eDate.value || null,
+  });
+  btn.disabled = false;
+  if (error) return alert('登録に失敗しました: ' + error.message);
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+
+// ===== 削除 =====
+async function delDonation(id) {
+  if (!confirm('このカンパ記録を削除しますか？')) return;
+  const { error } = await db.rpc('room_del_donation', { rid: state.room.id, p_pass: state.room.pass, did: id });
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+async function delExpense(id) {
+  if (!confirm('この経費記録を削除しますか？')) return;
+  const { error } = await db.rpc('room_del_expense', { rid: state.room.id, p_pass: state.room.pass, eid: id });
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
+}
+
+// ===== 目標金額 =====
+async function saveGoal(ev) {
+  ev.preventDefault();
+  const goal = +document.getElementById('goalAmount').value || 0;
+  const { error } = await db.rpc('room_set_goal', { rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject, goal: goal });
+  if (error) return alert('保存に失敗しました: ' + error.message);
+  await loadAll();
+  return false;
+}
+
+// ===== タブ =====
+function switchTab(tab) {
+  state.tab = tab;
+  ['kanpa', 'yosan', 'keihi', 'report'].forEach(t => {
+    document.getElementById('panel-' + t).style.display = t === tab ? '' : 'none';
+    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+  });
+  window.scrollTo({ top: 0 });
+}
+
+// ===== 描画 =====
+const RING_C = 2 * Math.PI * 52;
+
+function render() {
+  const sel = document.getElementById('projectSelect');
+  sel.innerHTML = state.projects.map(p =>
+    `<option value="${p.id}" ${p.id === state.currentProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  sel.onchange = () => { state.currentProject = sel.value; render(); };
+  document.getElementById('projectBar').style.display = state.projects.length > 1 ? '' : 'none';
+
+  const dons = state.donations.filter(d => d.project_id === state.currentProject);
+  const exps = state.expenses.filter(d => d.project_id === state.currentProject);
+  const sumIn = dons.reduce((s, d) => s + d.amount, 0);
+  const sumOut = exps.reduce((s, d) => s + d.amount, 0);
+
+  // ヒーロー（リング）
+  const heroProj = state.projects.find(p => p.id === state.currentProject);
+  const heroGoal = heroProj?.goal_amount || 0;
+  const heroPct = heroGoal > 0 ? Math.round(sumIn / heroGoal * 100) : null;
+  document.getElementById('heroSum').textContent = yen(sumIn);
+  document.getElementById('heroGoal').textContent = heroGoal > 0 ? yen(heroGoal) : '未設定';
+  const ring = document.getElementById('ringFg');
+  ring.style.strokeDasharray = RING_C;
+  ring.style.strokeDashoffset = RING_C * (1 - Math.min(heroPct ?? 0, 100) / 100);
+  ring.style.stroke = heroPct !== null && heroPct >= 100 ? 'var(--green)' : 'var(--accent)';
+  const pctEl = document.getElementById('heroPct');
+  pctEl.textContent = heroPct === null ? '–' : (heroPct >= 100 ? heroPct + '%🎉' : heroPct + '%');
+  pctEl.style.color = heroPct !== null && heroPct >= 100 ? 'var(--green)' : 'var(--text)';
+
+  // 一覧
+  const list = (items, cls, delFn) => items.length === 0
+    ? '<div class="empty">まだ登録がありません</div>'
+    : items.map(d => `
+      <div class="item">
+        <div class="info">
+          <div class="name">${esc(d.name)}</div>
+          <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.recipient ? ' ・ 受取:' + esc(d.recipient) : ''}${d.handler ? ' ・ 対応:' + esc(d.handler) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
+        </div>
+        <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
+        <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
+      </div>`).join('');
+
+  document.getElementById('donationList').innerHTML = list(dons, 'in', 'delDonation');
+  document.getElementById('expenseList').innerHTML = list(exps, 'out', 'delExpense');
+
+  // 予算一覧と予算vs経費
+  const buds = state.budgets.filter(b => b.project_id === state.currentProject);
+  const sumBudget = buds.reduce((s, b) => s + b.amount, 0);
+  document.getElementById('budgetList').innerHTML = buds.length === 0
+    ? '<div class="empty">まだ登録がありません</div>'
+    : buds.map(b => `
+      <div class="item">
+        <div class="info">
+          <div class="name">${esc(b.name)}</div>
+          <div class="meta">${b.memo ? esc(b.memo) : ''}</div>
+        </div>
+        <div class="amount">${yen(b.amount)}</div>
+        <button class="del" onclick="delBudget('${b.id}')" title="削除">✕</button>
+      </div>`).join('');
+  document.getElementById('budgetSummary').innerHTML = buds.length === 0 ? '' : `
+    <div style="border-top:1px solid var(--border); margin-top:8px; padding-top:14px; font-size:13px; display:flex; justify-content:space-between">
+      <span style="color:var(--muted)">予算合計 <strong style="color:var(--text)">${yen(sumBudget)}</strong> ／ 経費合計 <strong style="color:var(--text)">${yen(sumOut)}</strong></span>
+      <strong style="color:${sumOut <= sumBudget ? 'var(--green)' : 'var(--red)'}">${sumOut <= sumBudget ? '残り ' + yen(sumBudget - sumOut) : '超過 ' + yen(sumOut - sumBudget)}</strong>
+    </div>`;
+
+  // 経費登録の項目プルダウン
+  const eSel = document.getElementById('eNameSelect');
+  const prevChoice = eSel.value;
+  const itemNames = [...new Set([...buds.map(b => b.name), ...exps.map(e => e.name)])];
+  if (itemNames.length === 0) {
+    eSel.style.display = 'none';
+  } else {
+    eSel.style.display = '';
+    eSel.innerHTML = itemNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+      + '<option value="__other">その他（直接入力）</option>';
+    if ([...eSel.options].some(o => o.value === prevChoice)) eSel.value = prevChoice;
+  }
+  toggleExpenseOther();
+
+  // 目標金額と進捗（集計タブ）
+  const goal = heroGoal;
+  document.getElementById('goalAmount').value = goal || '';
+  const pct = goal > 0 ? Math.round(sumIn / goal * 100) : 0;
+  document.getElementById('goalProgress').innerHTML = goal > 0
+    ? `<div style="display:flex; justify-content:space-between; align-items:baseline; margin:16px 0 8px">
+         <span style="font-size:24px; font-weight:800; color:${pct >= 100 ? 'var(--green)' : 'var(--accent)'}">${pct}%</span>
+         <span style="font-size:12px; color:var(--muted)">${yen(sumIn)} / ${yen(goal)}</span>
+       </div>
+       <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pct, 100)}%; background:${pct >= 100 ? 'var(--green)' : 'var(--accent)'}"></div></div>
+       <p style="font-size:12px; color:var(--muted); margin-top:10px">${pct >= 100 ? '🎉 目標達成！' : 'あと ' + yen(goal - sumIn)}</p>`
+    : '<p style="font-size:12px; color:var(--muted); margin-top:12px">目標金額を設定すると、達成率が表示されます。</p>';
+
+  // 受け取り方法別
+  const byMethod = {};
+  dons.forEach(d => { const m = d.method || 'その他'; byMethod[m] = (byMethod[m] || 0) + d.amount; });
+  const methodEntries = Object.entries(byMethod).sort((a, b) => b[1] - a[1]);
+  document.getElementById('methodChart').innerHTML = methodEntries.length === 0
+    ? '<div class="empty">データなし</div>'
+    : methodEntries.map(([m, amt]) => `
+      <div class="stat-row">
+        <span>${esc(m)}</span>
+        <span><span class="stat-amount">${yen(amt)}</span><span class="stat-pct">${sumIn > 0 ? Math.round(amt / sumIn * 100) : 0}%</span></span>
+      </div>`).join('')
+      + `<div class="stat-row total"><span>合計</span><span><span class="stat-amount">${yen(sumIn)}</span><span class="stat-pct"></span></span></div>`;
+
+  // 経費内訳（項目ごとに合算）
+  const byItem = {};
+  exps.forEach(e => byItem[e.name] = (byItem[e.name] || 0) + e.amount);
+  const itemEntries = Object.entries(byItem).sort((a, b) => b[1] - a[1]);
+  document.getElementById('expenseChart').innerHTML = itemEntries.length === 0
+    ? '<div class="empty">データなし</div>'
+    : itemEntries.map(([n, amt]) => `
+      <div class="stat-row">
+        <span>${esc(n)}</span>
+        <span><span class="stat-amount">${yen(amt)}</span><span class="stat-pct">${sumOut > 0 ? Math.round(amt / sumOut * 100) : 0}%</span></span>
+      </div>`).join('')
+      + `<div class="stat-row total"><span>合計</span><span><span class="stat-amount">${yen(sumOut)}</span><span class="stat-pct"></span></span></div>`;
+
+  // 全企画サマリー
+  document.getElementById('projectSummary').innerHTML = state.projects.map(p => {
+    const pin = state.donations.filter(d => d.project_id === p.id).reduce((s, d) => s + d.amount, 0);
+    const pout = state.expenses.filter(d => d.project_id === p.id).reduce((s, d) => s + d.amount, 0);
+    return `<div class="item">
+      <div class="info"><div class="name">${esc(p.name)}</div>
+      <div class="meta">カンパ ${yen(pin)} ／ 経費 ${yen(pout)}</div></div>
+      <div class="amount ${pin - pout >= 0 ? 'in' : 'out'}">${yen(pin - pout)}</div>
+    </div>`;
+  }).join('');
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ===== 起動 =====
+initAccent();
+if (configured) {
+  db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const savedRoom = localStorage.getItem(ROOM_KEY);
+  if (savedRoom) {
+    state.room = JSON.parse(savedRoom);
+    showApp();
+  } else {
+    document.getElementById('roomGate').style.display = '';
+  }
+}
+</script>
+</body>
+</html>
