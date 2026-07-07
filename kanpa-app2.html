@@ -6,21 +6,21 @@
 <title>カンパ管理</title>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="theme-color" content="#0e1015">
+<meta name="theme-color" content="#ffffff">
 <meta name="apple-mobile-web-app-title" content="カンパ管理">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --accent: #e05297;
-    --bg: #0e1015;
-    --card: #171a21;
-    --card2: #10131a;
-    --text: #e8eaf0;
-    --muted: #8b90a0;
-    --border: #262a35;
-    --green: #34d399;
-    --red: #f87171;
+    --bg: #f5f6f9;
+    --card: #ffffff;
+    --card2: #f2f3f7;
+    --text: #1c1f26;
+    --muted: #7a8090;
+    --border: #e6e8ef;
+    --green: #16a34a;
+    --red: #dc2626;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body {
@@ -49,7 +49,7 @@
   .color-pop {
     position: absolute; top: 54px; right: 14px; z-index: 30;
     background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    padding: 12px; display: none; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+    padding: 12px; display: none; box-shadow: 0 12px 32px rgba(0,0,0,.15);
   }
   .color-pop.open { display: block; }
   .color-pop .title { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
@@ -57,7 +57,7 @@
   .swatch {
     width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid transparent;
   }
-  .swatch.active { border-color: #fff; }
+  .swatch.active { border-color: var(--text); }
 
   .container { max-width: 640px; margin: 0 auto; padding: 16px 16px 96px; }
 
@@ -105,7 +105,7 @@
     outline: none; border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
   }
-  input::placeholder { color: #565b6b; }
+  input::placeholder { color: #a6abb8; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 480px) { .grid2 { grid-template-columns: 1fr; gap: 0; } }
 
@@ -131,7 +131,7 @@
   .item .amount { font-weight: 700; font-size: 15px; white-space: nowrap; min-width: 100px; text-align: right; font-variant-numeric: tabular-nums; }
   .amount.in { color: var(--green); }
   .amount.out { color: var(--red); }
-  .del { background: none; border: none; color: #4a4f5e; font-size: 15px; cursor: pointer; padding: 6px; width: 28px; flex-shrink: 0; }
+  .del { background: none; border: none; color: #c3c7d1; font-size: 15px; cursor: pointer; padding: 6px; width: 28px; flex-shrink: 0; }
   .del:hover { color: var(--red); }
   .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 26px 0; }
 
