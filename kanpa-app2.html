@@ -241,7 +241,11 @@
   <!-- カンパ -->
   <div id="panel-kanpa">
     <div class="card">
-      <h2>カンパを登録</h2>
+      <div class="section-head">
+        <h2>カンパを登録</h2>
+        <button type="button" class="btn ghost small" onclick="document.getElementById('csvInput').click()">📄 CSV取り込み</button>
+      </div>
+      <input type="file" id="csvInput" accept=".csv,text/csv" style="display:none" onchange="handleCSVFile(this)">
       <form onsubmit="return addDonation(event)">
         <div class="grid2">
           <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
@@ -477,6 +481,83 @@ function exportDonations() {
   XLSX.utils.book_append_sheet(wb, ws, 'カンパ一覧');
   const dateStr = new Date().toISOString().slice(0, 10);
   XLSX.writeFile(wb, `カンパ一覧_${proj ? proj.name : ''}_${dateStr}.xlsx`);
+}
+
+// ===== CSV取り込み =====
+function parseCSV(text) {
+  const rows = []; let row = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+      else cur += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ',') { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some(c => c.trim() !== '')) rows.push(row);
+      row = [];
+    } else cur += ch;
+  }
+  row.push(cur);
+  if (row.some(c => c.trim() !== '')) rows.push(row);
+  return rows;
+}
+
+async function handleCSVFile(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch (e) { text = new TextDecoder('shift_jis').decode(buf); }
+  text = text.replace(/^﻿/, '');
+  const rows = parseCSV(text);
+  if (rows.length < 2) return alert('データ行が見つかりませんでした。1行目に見出し、2行目以降にデータを入れてください。');
+  const head = rows[0].map(h => h.trim());
+  const col = kws => head.findIndex(h => kws.some(k => h.includes(k)));
+  const ci = {
+    date: col(['日付']),
+    name: col(['名前']),
+    username: col(['ユーザー']),
+    amount: col(['金額']),
+    method: col(['受取方法', '方法']),
+    recipient: col(['受取者']),
+    memo: col(['メモ']),
+  };
+  if (ci.name < 0 || ci.amount < 0) return alert('見出しに「お名前」と「金額」の列が必要です。\n見出しの例：日付, お名前, ユーザーネーム, 金額, 受取方法, 受取者, メモ');
+  const recs = [];
+  for (const r of rows.slice(1)) {
+    const name = (r[ci.name] || '').trim();
+    const amount = parseInt(String(r[ci.amount] || '').replace(/[^0-9-]/g, ''), 10);
+    if (!name || !amount || amount <= 0) continue;
+    let date = ci.date >= 0 ? (r[ci.date] || '').trim().replace(/\//g, '-') : '';
+    const m = date.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    recs.push({
+      name,
+      username: ci.username >= 0 ? (r[ci.username] || '').trim() : '',
+      amount,
+      method: (ci.method >= 0 && (r[ci.method] || '').trim()) ? r[ci.method].trim() : '現金',
+      recipient: ci.recipient >= 0 ? (r[ci.recipient] || '').trim() : '',
+      memo: ci.memo >= 0 ? (r[ci.memo] || '').trim() : '',
+      date: m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : null,
+    });
+  }
+  if (recs.length === 0) return alert('取り込めるデータがありませんでした（お名前と1以上の金額が必要です）');
+  if (!confirm(`${recs.length}件のカンパを取り込みます。よろしいですか？`)) return;
+  let ok = 0, ng = 0;
+  for (const rec of recs) {
+    const { error } = await db.rpc('room_add_donation', {
+      rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+      pname: rec.name, pusername: rec.username, pamount: rec.amount,
+      pmethod: rec.method, precipient: rec.recipient, pmemo: rec.memo, pdate: rec.date,
+    });
+    if (error) ng++; else ok++;
+  }
+  await loadAll();
+  alert(`取り込み完了：成功 ${ok}件${ng ? '、失敗 ' + ng + '件' : ''}`);
 }
 
 // ===== 予算 =====
