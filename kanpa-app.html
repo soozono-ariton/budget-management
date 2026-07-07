@@ -180,10 +180,22 @@
       <select id="projectSelect"></select>
     </div>
 
-    <div class="summary">
-      <div class="card"><div class="label">カンパ合計</div><div class="value plus" id="sumIn">¥0</div></div>
-      <div class="card"><div class="label">経費合計</div><div class="value minus" id="sumOut">¥0</div></div>
-      <div class="card"><div class="label">残高</div><div class="value" id="sumBalance">¥0</div></div>
+    <div class="card" style="margin-bottom:16px; background:linear-gradient(135deg, #fff 60%, var(--primary-light)); border:1px solid var(--primary-light)">
+      <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:12px">
+        <div>
+          <div style="font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.05em">カンパ合計</div>
+          <div id="heroSum" style="font-size:30px; font-weight:800; color:var(--green); line-height:1.2; font-variant-numeric:tabular-nums">¥0</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.05em">目標金額</div>
+          <div id="heroGoal" style="font-size:17px; font-weight:700; font-variant-numeric:tabular-nums">未設定</div>
+        </div>
+      </div>
+      <div class="bar-track" style="height:14px; border-radius:8px"><div id="heroBar" class="bar-fill" style="width:0%; border-radius:8px; transition:width .4s"></div></div>
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:8px">
+        <span style="font-size:12px; color:var(--muted)">進捗率</span>
+        <strong id="heroPct" style="font-size:20px; color:var(--primary); font-variant-numeric:tabular-nums">－</strong>
+      </div>
     </div>
 
     <div class="tabs">
@@ -510,11 +522,19 @@ function render() {
   const sumIn = dons.reduce((s, d) => s + d.amount, 0);
   const sumOut = exps.reduce((s, d) => s + d.amount, 0);
 
-  document.getElementById('sumIn').textContent = yen(sumIn);
-  document.getElementById('sumOut').textContent = yen(sumOut);
-  const bal = document.getElementById('sumBalance');
-  bal.textContent = yen(sumIn - sumOut);
-  bal.className = 'value ' + (sumIn - sumOut >= 0 ? 'plus' : 'minus');
+  // ヒーローカード（カンパ合計・目標金額・進捗率）
+  const heroProj = state.projects.find(p => p.id === state.currentProject);
+  const heroGoal = heroProj?.goal_amount || 0;
+  const heroPct = heroGoal > 0 ? Math.round(sumIn / heroGoal * 100) : null;
+  document.getElementById('heroSum').textContent = yen(sumIn);
+  document.getElementById('heroGoal').textContent = heroGoal > 0 ? yen(heroGoal) : '未設定';
+  const heroBar = document.getElementById('heroBar');
+  heroBar.style.width = (heroPct === null ? 0 : Math.min(heroPct, 100)) + '%';
+  heroBar.style.background = heroPct !== null && heroPct >= 100 ? 'var(--green)' : 'var(--primary)';
+  const heroPctEl = document.getElementById('heroPct');
+  heroPctEl.textContent = heroPct === null ? '目標未設定' : (heroPct >= 100 ? heroPct + '% 🎉' : heroPct + '%');
+  heroPctEl.style.color = heroPct !== null && heroPct >= 100 ? 'var(--green)' : 'var(--primary)';
+  heroPctEl.style.fontSize = heroPct === null ? '13px' : '20px';
 
   const list = (items, cls, delFn) => items.length === 0
     ? '<div class="empty">まだ登録がありません</div>'
