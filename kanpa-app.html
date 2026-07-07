@@ -110,6 +110,14 @@
   .bar-fill { height: 100%; border-radius: 6px; background: var(--primary); }
   .bar-fill.expense { background: #f59e0b; }
 
+  /* 集計のシンプル一覧 */
+  .stat-row { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .stat-amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-row .stat-pct { display: inline-block; min-width: 44px; text-align: right; font-size: 12px; color: var(--muted); margin-left: 10px; font-variant-numeric: tabular-nums; }
+  .stat-row.total { border-top: 2px solid var(--border); border-bottom: none; margin-top: 2px; }
+  .stat-row.total span:first-child { color: var(--muted); font-size: 13px; }
+
   .note { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0 20px; }
 
   /* ===== スマホ対応 ===== */
@@ -600,27 +608,31 @@ function render() {
        <p style="font-size:12px; color:var(--muted); margin-top:8px">${pct >= 100 ? '🎉 目標達成！' : 'あと ' + yen(goal - sumIn)}</p>`
     : '<p style="font-size:13px; color:var(--muted); margin-top:10px">目標金額を設定すると、達成率がここに表示されます。</p>';
 
-  // 受け取り方法別
+  // 受け取り方法別（シンプル一覧）
   const byMethod = {};
   dons.forEach(d => { const m = d.method || 'その他'; byMethod[m] = (byMethod[m] || 0) + d.amount; });
   const methodEntries = Object.entries(byMethod).sort((a, b) => b[1] - a[1]);
-  const maxM = methodEntries[0]?.[1] || 1;
   document.getElementById('methodChart').innerHTML = methodEntries.length === 0
     ? '<div class="empty">データなし</div>'
     : methodEntries.map(([m, amt]) => `
-      <div class="bar-row">
-        <div class="bar-label"><span>${esc(m)}</span><strong>${yen(amt)}</strong></div>
-        <div class="bar-track"><div class="bar-fill" style="width:${amt / maxM * 100}%"></div></div>
-      </div>`).join('');
+      <div class="stat-row">
+        <span>${esc(m)}</span>
+        <span><span class="stat-amount">${yen(amt)}</span><span class="stat-pct">${sumIn > 0 ? Math.round(amt / sumIn * 100) : 0}%</span></span>
+      </div>`).join('')
+      + `<div class="stat-row total"><span>合計</span><span><span class="stat-amount">${yen(sumIn)}</span><span class="stat-pct"></span></span></div>`;
 
-  const maxE = Math.max(...exps.map(e => e.amount), 1);
-  document.getElementById('expenseChart').innerHTML = exps.length === 0
+  // 経費内訳（項目ごとに合算したシンプル一覧）
+  const byItem = {};
+  exps.forEach(e => byItem[e.name] = (byItem[e.name] || 0) + e.amount);
+  const itemEntries = Object.entries(byItem).sort((a, b) => b[1] - a[1]);
+  document.getElementById('expenseChart').innerHTML = itemEntries.length === 0
     ? '<div class="empty">データなし</div>'
-    : exps.slice().sort((a, b) => b.amount - a.amount).map(e => `
-      <div class="bar-row">
-        <div class="bar-label"><span>${esc(e.name)}</span><strong>${yen(e.amount)}</strong></div>
-        <div class="bar-track"><div class="bar-fill expense" style="width:${e.amount / maxE * 100}%"></div></div>
-      </div>`).join('');
+    : itemEntries.map(([n, amt]) => `
+      <div class="stat-row">
+        <span>${esc(n)}</span>
+        <span><span class="stat-amount">${yen(amt)}</span><span class="stat-pct">${sumOut > 0 ? Math.round(amt / sumOut * 100) : 0}%</span></span>
+      </div>`).join('')
+      + `<div class="stat-row total"><span>合計</span><span><span class="stat-amount">${yen(sumOut)}</span><span class="stat-pct"></span></span></div>`;
 
   document.getElementById('projectSummary').innerHTML = state.projects.map(p => {
     const pin = state.donations.filter(d => d.project_id === p.id).reduce((s, d) => s + d.amount, 0);
