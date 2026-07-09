@@ -217,9 +217,9 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
           <h2 style="margin-bottom:0">カンパを登録</h2>
-          <button type="button" class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="document.getElementById('csvInput').click()">📄 CSV取り込み</button>
+          <button type="button" class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="document.getElementById('csvInput').click()">📄 ファイル取込</button>
         </div>
-        <input type="file" id="csvInput" accept=".csv,text/csv" style="display:none" onchange="handleCSVFile(this)">
+        <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleImportFile(this)">
         <form onsubmit="return addDonation(event)">
           <div class="grid2">
             <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
@@ -485,47 +485,112 @@ function parseCSV(text) {
   return rows;
 }
 
-async function handleCSVFile(input) {
+// 優先順位つき列検索（groups: 上から優先のキーワード配列）
+function importCol(head, groups) {
+  for (const kws of groups) {
+    const i = head.findIndex(h => kws.some(k => h.includes(k)));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+// 2次元配列（1シート分）→ カンパレコード配列。見出し行を自動検出。
+function sheetToRecords(rows) {
+  let hIdx = -1, head = null;
+  for (let i = 0; i < Math.min(rows.length, 25); i++) {
+    const r = (rows[i] || []).map(c => String(c == null ? '' : c).trim());
+    const hasName = r.some(h => /お名前|氏名|名前|記載希望/.test(h));
+    const hasAmt = r.some(h => /金額/.test(h));
+    if (hasName && hasAmt) { hIdx = i; head = r; break; }
+  }
+  if (hIdx < 0) return [];
+  const dataRows = rows.slice(hIdx + 1);
+  const ci = {
+    name: importCol(head, [['記載希望のお名前'], ['お名前'], ['氏名'], ['名前']]),
+    amount: importCol(head, [['金額']]),
+    method: importCol(head, [['受取方法'], ['方法']]),
+    recipient: importCol(head, [['受取者']]),
+    memo: importCol(head, [['メモ'], ['入金状況']]),
+    date: importCol(head, [['日付']]),
+  };
+  // ユーザーネーム列：①ユーザーネーム明示（そのまま）②Xアカウント/アカウント明示（@抽出）
+  // ③見出し不明なら値が@から始まる率の高い列を推定（ユーザーID等の誤爆防止）
+  let extractHandle = false;
+  ci.username = importCol(head, [['ユーザーネーム']]);
+  if (ci.username < 0) {
+    ci.username = importCol(head, [['Xアカウント'], ['アカウント']]);
+    if (ci.username >= 0) extractHandle = true;
+  }
+  if (ci.username < 0) {
+    let best = -1, bestRate = 0;
+    for (let c = 0; c < head.length; c++) {
+      let hit = 0, non = 0;
+      for (const r of dataRows) {
+        const v = String((r && r[c] != null) ? r[c] : '').trim();
+        if (v) { non++; if (/@[A-Za-z0-9_]{2,}/.test(v)) hit++; }
+      }
+      const rate = non ? hit / non : 0;
+      if (rate > bestRate && rate >= 0.3) { bestRate = rate; best = c; }
+    }
+    if (best >= 0) { ci.username = best; extractHandle = true; }
+  }
+  const recs = [];
+  for (const raw of rows.slice(hIdx + 1)) {
+    const r = raw || [];
+    const name = String(r[ci.name] == null ? '' : r[ci.name]).trim();
+    const amount = parseInt(String(r[ci.amount] == null ? '' : r[ci.amount]).replace(/[^0-9-]/g, ''), 10);
+    if (!name || !amount || amount <= 0) continue;
+    let username = ci.username >= 0 ? String(r[ci.username] == null ? '' : r[ci.username]).trim() : '';
+    if (username && extractHandle) {
+      let h = '';
+      for (const t of username.split(/\s|\n|　/)) { const m = t.match(/^@[A-Za-z0-9_]{2,}$/); if (m) { h = m[0]; break; } }
+      if (!h) { const m = username.match(/@[A-Za-z0-9_]{2,}/); h = m ? m[0] : ''; }
+      username = h;
+    }
+    let date = ci.date >= 0 ? String(r[ci.date] == null ? '' : r[ci.date]).trim().replace(/\//g, '-') : '';
+    const dm = date.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    recs.push({
+      name, username, amount,
+      method: ci.method >= 0 ? String(r[ci.method] == null ? '' : r[ci.method]).trim() : '',
+      recipient: ci.recipient >= 0 ? String(r[ci.recipient] == null ? '' : r[ci.recipient]).trim() : '',
+      memo: ci.memo >= 0 ? String(r[ci.memo] == null ? '' : r[ci.memo]).trim() : '',
+      date: dm ? `${dm[1]}-${dm[2].padStart(2, '0')}-${dm[3].padStart(2, '0')}` : null,
+    });
+  }
+  return recs;
+}
+
+async function handleImportFile(input) {
   const file = input.files[0];
   input.value = '';
   if (!file) return;
   const buf = await file.arrayBuffer();
-  let text;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-  catch (e) { text = new TextDecoder('shift_jis').decode(buf); }
-  text = text.replace(/^﻿/, '');
-  const rows = parseCSV(text);
-  if (rows.length < 2) return alert('データ行が見つかりませんでした。1行目に見出し、2行目以降にデータを入れてください。');
-  const head = rows[0].map(h => h.trim());
-  const col = kws => head.findIndex(h => kws.some(k => h.includes(k)));
-  const ci = {
-    date: col(['日付']),
-    name: col(['名前']),
-    username: col(['ユーザー']),
-    amount: col(['金額']),
-    method: col(['受取方法', '方法']),
-    recipient: col(['受取者']),
-    memo: col(['メモ']),
-  };
-  if (ci.name < 0 || ci.amount < 0) return alert('見出しに「お名前」と「金額」の列が必要です。\n見出しの例：日付, お名前, ユーザーネーム, 金額, 受取方法, 受取者, メモ');
-  const recs = [];
-  for (const r of rows.slice(1)) {
-    const name = (r[ci.name] || '').trim();
-    const amount = parseInt(String(r[ci.amount] || '').replace(/[^0-9-]/g, ''), 10);
-    if (!name || !amount || amount <= 0) continue;
-    let date = ci.date >= 0 ? (r[ci.date] || '').trim().replace(/\//g, '-') : '';
-    const m = date.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    recs.push({
-      name,
-      username: ci.username >= 0 ? (r[ci.username] || '').trim() : '',
-      amount,
-      method: (ci.method >= 0 && (r[ci.method] || '').trim()) ? r[ci.method].trim() : '現金',
-      recipient: ci.recipient >= 0 ? (r[ci.recipient] || '').trim() : '',
-      memo: ci.memo >= 0 ? (r[ci.memo] || '').trim() : '',
-      date: m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : null,
-    });
+  const fname = file.name.toLowerCase();
+  let sheets = [];
+  if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
+    const wb = XLSX.read(buf, { type: 'array' });
+    sheets = wb.SheetNames.map(n => XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' }));
+  } else {
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch (e) { text = new TextDecoder('shift_jis').decode(buf); }
+    text = text.replace(/^﻿/, '');
+    sheets = [parseCSV(text)];
   }
-  if (recs.length === 0) return alert('取り込めるデータがありませんでした（お名前と1以上の金額が必要です）');
+  // 全シートを試し、最も多く取れたシートを採用
+  let recs = [];
+  for (const rows of sheets) { const r = sheetToRecords(rows); if (r.length > recs.length) recs = r; }
+  if (recs.length === 0) return alert('取り込めるデータが見つかりませんでした。\n見出しに「お名前（または氏名）」と「金額」を含む表が必要です。');
+  // 受取方法が全件空なら、まとめて既定値を尋ねる
+  const noMethod = recs.every(r => !r.method);
+  if (noMethod) {
+    const d = prompt('受取方法が見つかりませんでした。全件に設定する受取方法を入力してください（現金／PayPay／オンライン）', 'オンライン');
+    if (d === null) return;
+    const dv = d.trim() || '現金';
+    recs.forEach(r => r.method = dv);
+  } else {
+    recs.forEach(r => { if (!r.method) r.method = '現金'; });
+  }
   if (!confirm(`${recs.length}件のカンパを取り込みます。よろしいですか？`)) return;
   let ok = 0, ng = 0;
   for (const rec of recs) {
