@@ -326,6 +326,22 @@
   <p class="note">データはSupabase（クラウドDB）に保存されます。</p>
 </div>
 
+<div id="importModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:200; align-items:center; justify-content:center; padding:16px;">
+  <div style="background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:16px; max-width:520px; width:100%; max-height:88vh; overflow:auto; padding:20px;">
+    <h2 style="font-size:16px; margin:0 0 4px;">取り込み内容の確認</h2>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">各項目に対応する列を選んでください。お名前は本名ではなくニックネームの列を自動で選んでいます。下のプレビューで確認できます。</p>
+    <div id="importMapFields"></div>
+    <div style="margin-top:8px; font-size:13px;">
+      <div style="font-weight:700; margin-bottom:4px;">プレビュー</div>
+      <div id="importPreview" style="font-size:12px;"></div>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:16px;">
+      <button type="button" onclick="confirmImport()" style="flex:1; padding:12px; border:none; border-radius:10px; background:var(--primary, #e05297); color:#fff; font-weight:700; cursor:pointer;">取り込む</button>
+      <button type="button" onclick="closeImportModal()" style="padding:12px 16px; border:1px solid var(--border); border-radius:10px; background:transparent; color:var(--text); cursor:pointer;">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // ★★★ ここに Supabase の接続情報を貼り付けてください ★★★
@@ -494,71 +510,122 @@ function importCol(head, groups) {
   return -1;
 }
 
-// 2次元配列（1シート分）→ カンパレコード配列。見出し行を自動検出。
-function sheetToRecords(rows) {
-  let hIdx = -1, head = null;
-  for (let i = 0; i < Math.min(rows.length, 25); i++) {
-    const r = (rows[i] || []).map(c => String(c == null ? '' : c).trim());
-    const hasName = r.some(h => /お名前|氏名|名前|記載希望/.test(h));
-    const hasAmt = r.some(h => /金額/.test(h));
-    if (hasName && hasAmt) { hIdx = i; head = r; break; }
+// セル取得
+function getCell(row, i) { return (i >= 0 && row && row[i] != null) ? String(row[i]).trim() : ''; }
+
+// 見出し行（お名前系＋金額系）を検出し、最もデータ行が多いシートを選ぶ
+function pickSheet(sheets) {
+  let best = null;
+  for (const rows of sheets) {
+    for (let i = 0; i < Math.min(rows.length, 25); i++) {
+      const r = (rows[i] || []).map(c => String(c == null ? '' : c).trim());
+      const hasName = r.some(h => /お名前|氏名|名前|記載希望|ニックネーム/.test(h));
+      const hasAmt = r.some(h => /金額/.test(h));
+      if (hasName && hasAmt) {
+        const cand = { head: r, dataRows: rows.slice(i + 1) };
+        if (!best || cand.dataRows.length > best.dataRows.length) best = cand;
+        break;
+      }
+    }
   }
-  if (hIdx < 0) return [];
-  const dataRows = rows.slice(hIdx + 1);
-  const ci = {
-    name: importCol(head, [['記載希望のお名前'], ['お名前'], ['氏名'], ['名前']]),
+  return best;
+}
+
+// @ハンドルを多く含む列を推定（Xアカウント列）
+function guessUsernameCol(head, dataRows) {
+  let best = -1, bestRate = 0;
+  for (let c = 0; c < head.length; c++) {
+    let hit = 0, non = 0;
+    for (const r of dataRows) { const v = getCell(r, c); if (v) { non++; if (/@[A-Za-z0-9_]{2,}/.test(v)) hit++; } }
+    const rate = non ? hit / non : 0;
+    if (rate > bestRate && rate >= 0.3) { bestRate = rate; best = c; }
+  }
+  return best;
+}
+
+// 本名っぽい列（姓 名の漢字）を避け、ニックネームらしい列を推定
+function guessNameCol(head, dataRows, exclude) {
+  const prov = /(北海道|東京都|大阪府|京都府|.{2,3}県)/;
+  const sample = dataRows.slice(0, 50);
+  let best = -1, bestScore = -1;
+  for (let c = 0; c < head.length; c++) {
+    if (exclude.includes(c)) continue;
+    const vals = [];
+    for (const r of sample) { const v = getCell(r, c); if (v) vals.push(v); }
+    if (vals.length < Math.max(2, Math.ceil(sample.length * 0.4))) continue;
+    let at = 0, num = 0, date = 0, full = 0, kana = 0, pv = 0, lenSum = 0;
+    for (const v of vals) {
+      if (/@[A-Za-z0-9_]{2,}/.test(v)) at++;
+      if (/^-?[0-9,]+$/.test(v)) num++;
+      if (/\d{4}[-\/年]\d{1,2}[-\/月]\d{1,2}/.test(v)) date++;
+      if (/^[㐀-鿿々]+[ 　][㐀-鿿々]+$/.test(v)) full++;
+      if (/[぀-ヿ]/.test(v)) kana++;
+      if (prov.test(v)) pv++;
+      lenSum += v.length;
+    }
+    const n = vals.length;
+    if (at / n >= 0.3 || num / n >= 0.5 || date / n >= 0.4 || full / n >= 0.4 || pv / n >= 0.4) continue;
+    const uniq = new Set(vals).size / n;
+    const avgLen = lenSum / n;
+    const score = uniq + (kana / n) * 0.5 - Math.max(0, avgLen - 8) * 0.05;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return best;
+}
+
+// 自動マッピング推定
+function guessMapping(head, dataRows) {
+  const m = {
     amount: importCol(head, [['金額']]),
     method: importCol(head, [['受取方法'], ['方法']]),
     recipient: importCol(head, [['受取者']]),
-    memo: importCol(head, [['メモ'], ['入金状況']]),
-    date: importCol(head, [['日付']]),
+    memo: importCol(head, [['メモ']]),
+    date: importCol(head, [['日付'], ['申込日'], ['入金日']]),
+    username: -1, name: -1, extractHandle: false,
   };
-  // ユーザーネーム列：①ユーザーネーム明示（そのまま）②Xアカウント/アカウント明示（@抽出）
-  // ③見出し不明なら値が@から始まる率の高い列を推定（ユーザーID等の誤爆防止）
-  let extractHandle = false;
-  ci.username = importCol(head, [['ユーザーネーム']]);
-  if (ci.username < 0) {
-    ci.username = importCol(head, [['Xアカウント'], ['アカウント']]);
-    if (ci.username >= 0) extractHandle = true;
+  m.username = importCol(head, [['ユーザーネーム']]);
+  if (m.username < 0) { m.username = importCol(head, [['Xアカウント'], ['アカウント']]); if (m.username >= 0) m.extractHandle = true; }
+  if (m.username < 0) { const g = guessUsernameCol(head, dataRows); if (g >= 0) { m.username = g; m.extractHandle = true; } }
+  // お名前：ニックネーム系を明示優先 → 値ベースでニックネーム推定 → 最後に氏名
+  m.name = importCol(head, [['ニックネーム'], ['記載希望のお名前'], ['お名前'], ['表示名']]);
+  if (m.name < 0) {
+    const exclude = [m.amount, m.username, m.date, m.method, m.recipient].filter(x => x >= 0);
+    m.name = guessNameCol(head, dataRows, exclude);
   }
-  if (ci.username < 0) {
-    let best = -1, bestRate = 0;
-    for (let c = 0; c < head.length; c++) {
-      let hit = 0, non = 0;
-      for (const r of dataRows) {
-        const v = String((r && r[c] != null) ? r[c] : '').trim();
-        if (v) { non++; if (/@[A-Za-z0-9_]{2,}/.test(v)) hit++; }
-      }
-      const rate = non ? hit / non : 0;
-      if (rate > bestRate && rate >= 0.3) { bestRate = rate; best = c; }
-    }
-    if (best >= 0) { ci.username = best; extractHandle = true; }
-  }
+  if (m.name < 0) m.name = importCol(head, [['氏名'], ['名前']]);
+  return m;
+}
+
+// マッピングに従ってレコード生成
+function buildRecords(dataRows, m, methodDefault) {
   const recs = [];
-  for (const raw of rows.slice(hIdx + 1)) {
+  for (const raw of dataRows) {
     const r = raw || [];
-    const name = String(r[ci.name] == null ? '' : r[ci.name]).trim();
-    const amount = parseInt(String(r[ci.amount] == null ? '' : r[ci.amount]).replace(/[^0-9-]/g, ''), 10);
+    const name = getCell(r, m.name);
+    const amount = parseInt(getCell(r, m.amount).replace(/[^0-9-]/g, ''), 10);
     if (!name || !amount || amount <= 0) continue;
-    let username = ci.username >= 0 ? String(r[ci.username] == null ? '' : r[ci.username]).trim() : '';
-    if (username && extractHandle) {
+    let username = getCell(r, m.username);
+    if (username && m.extractHandle) {
       let h = '';
-      for (const t of username.split(/\s|\n|　/)) { const m = t.match(/^@[A-Za-z0-9_]{2,}$/); if (m) { h = m[0]; break; } }
-      if (!h) { const m = username.match(/@[A-Za-z0-9_]{2,}/); h = m ? m[0] : ''; }
+      for (const t of username.split(/\s|\n|　/)) { const mm = t.match(/^@[A-Za-z0-9_]{2,}$/); if (mm) { h = mm[0]; break; } }
+      if (!h) { const mm = username.match(/@[A-Za-z0-9_]{2,}/); h = mm ? mm[0] : ''; }
       username = h;
     }
-    let date = ci.date >= 0 ? String(r[ci.date] == null ? '' : r[ci.date]).trim().replace(/\//g, '-') : '';
-    const dm = date.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    let method = getCell(r, m.method);
+    if (!method) method = methodDefault || '現金';
+    const dstr = getCell(r, m.date).replace(/\//g, '-');
+    const dm = dstr.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
     recs.push({
-      name, username, amount,
-      method: ci.method >= 0 ? String(r[ci.method] == null ? '' : r[ci.method]).trim() : '',
-      recipient: ci.recipient >= 0 ? String(r[ci.recipient] == null ? '' : r[ci.recipient]).trim() : '',
-      memo: ci.memo >= 0 ? String(r[ci.memo] == null ? '' : r[ci.memo]).trim() : '',
+      name, username, amount, method,
+      recipient: getCell(r, m.recipient),
+      memo: getCell(r, m.memo),
       date: dm ? `${dm[1]}-${dm[2].padStart(2, '0')}-${dm[3].padStart(2, '0')}` : null,
     });
   }
   return recs;
 }
+
+let importState = null;
 
 async function handleImportFile(input) {
   const file = input.files[0];
@@ -577,20 +644,76 @@ async function handleImportFile(input) {
     text = text.replace(/^﻿/, '');
     sheets = [parseCSV(text)];
   }
-  // 全シートを試し、最も多く取れたシートを採用
-  let recs = [];
-  for (const rows of sheets) { const r = sheetToRecords(rows); if (r.length > recs.length) recs = r; }
-  if (recs.length === 0) return alert('取り込めるデータが見つかりませんでした。\n見出しに「お名前（または氏名）」と「金額」を含む表が必要です。');
-  // 受取方法が全件空なら、まとめて既定値を尋ねる
-  const noMethod = recs.every(r => !r.method);
-  if (noMethod) {
-    const d = prompt('受取方法が見つかりませんでした。全件に設定する受取方法を入力してください（現金／PayPay／オンライン）', 'オンライン');
-    if (d === null) return;
-    const dv = d.trim() || '現金';
-    recs.forEach(r => r.method = dv);
-  } else {
-    recs.forEach(r => { if (!r.method) r.method = '現金'; });
+  const picked = pickSheet(sheets);
+  if (!picked) return alert('取り込めるデータが見つかりませんでした。\n見出しに「お名前（または氏名）」と「金額」を含む表が必要です。');
+  importState = { head: picked.head, dataRows: picked.dataRows, map: guessMapping(picked.head, picked.dataRows) };
+  openImportModal();
+}
+
+function colOptions(selected) {
+  const { head, dataRows } = importState;
+  let html = '<option value="-1"' + (selected < 0 ? ' selected' : '') + '>（なし）</option>';
+  for (let c = 0; c < head.length; c++) {
+    const label = head[c] ? head[c] : ('列' + (c + 1));
+    const ex = [];
+    for (const r of dataRows) { const v = getCell(r, c); if (v) { ex.push(v.length > 12 ? v.slice(0, 12) + '…' : v); if (ex.length >= 2) break; } }
+    const txt = esc(label + (ex.length ? '（例: ' + ex.join(', ') + '）' : ''));
+    html += '<option value="' + c + '"' + (c === selected ? ' selected' : '') + '>' + txt + '</option>';
   }
+  return html;
+}
+
+function openImportModal() {
+  const m = importState.map;
+  const field = (key, label, req) => `
+    <div style="margin-bottom:10px">
+      <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px">${label}${req ? '（必須）' : ''}</label>
+      <select id="map_${key}" onchange="updateImportPreview()" style="width:100%">${colOptions(m[key])}</select>
+    </div>`;
+  document.getElementById('importMapFields').innerHTML =
+    field('name', 'お名前', true) +
+    `<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">ユーザーネーム</label>
+       <select id="map_username" onchange="updateImportPreview()" style="width:100%">${colOptions(m.username)}</select>
+       <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:6px">
+         <input type="checkbox" id="map_extract" ${m.extractHandle ? 'checked' : ''} onchange="updateImportPreview()" style="width:auto"> @から始まるIDだけ抜き出す</label></div>` +
+    field('amount', '金額', true) +
+    `<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">受取方法</label>
+       <select id="map_method" onchange="updateImportPreview()" style="width:100%">${colOptions(m.method)}</select>
+       <input id="map_methodDefault" value="現金" placeholder="列がない場合の既定（現金/PayPay/オンライン）" oninput="updateImportPreview()" style="width:100%;margin-top:6px"></div>` +
+    field('date', '日付') +
+    field('recipient', '受取者') +
+    field('memo', 'メモ');
+  document.getElementById('importModal').style.display = 'flex';
+  updateImportPreview();
+}
+
+function readModalMap() {
+  const v = id => parseInt(document.getElementById(id).value, 10);
+  return {
+    name: v('map_name'), username: v('map_username'), amount: v('map_amount'),
+    method: v('map_method'), date: v('map_date'), recipient: v('map_recipient'), memo: v('map_memo'),
+    extractHandle: document.getElementById('map_extract').checked,
+  };
+}
+
+function updateImportPreview() {
+  const map = readModalMap();
+  const def = document.getElementById('map_methodDefault').value.trim() || '現金';
+  const recs = buildRecords(importState.dataRows, map, def);
+  const box = document.getElementById('importPreview');
+  if (recs.length === 0) { box.innerHTML = '<span style="color:var(--red)">この設定では取り込めるデータがありません（お名前と1以上の金額が必要）</span>'; return; }
+  const rows = recs.slice(0, 3).map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><b>${esc(r.name)}</b> ／ ${esc(r.username || '-')} ／ ¥${r.amount.toLocaleString('ja-JP')} ／ ${esc(r.method)}</div>`).join('');
+  box.innerHTML = `<div style="color:var(--muted);margin-bottom:4px">全${recs.length}件のうち先頭3件：</div>${rows}`;
+}
+
+function closeImportModal() { document.getElementById('importModal').style.display = 'none'; importState = null; }
+
+async function confirmImport() {
+  const map = readModalMap();
+  if (map.name < 0 || map.amount < 0) return alert('「お名前」と「金額」の列を選んでください。');
+  const def = document.getElementById('map_methodDefault').value.trim() || '現金';
+  const recs = buildRecords(importState.dataRows, map, def);
+  if (recs.length === 0) return alert('取り込めるデータがありません。');
   if (!confirm(`${recs.length}件のカンパを取り込みます。よろしいですか？`)) return;
   let ok = 0, ng = 0;
   for (const rec of recs) {
@@ -601,6 +724,7 @@ async function handleImportFile(input) {
     });
     if (error) ng++; else ok++;
   }
+  closeImportModal();
   await loadAll();
   alert(`取り込み完了：成功 ${ok}件${ng ? '、失敗 ' + ng + '件' : ''}`);
 }
