@@ -701,7 +701,7 @@ function openImportModal() {
     <div style="margin-bottom:12px">
       <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px">受取方法（全件まとめて）</label>
       <select id="map_methodDefault" onchange="updateImportPreview()" style="width:100%">
-        <option value="現金">現金</option><option value="PayPay">PayPay</option><option value="オンライン">オンライン</option>
+        <option value="オンライン" selected>オンライン</option><option value="現金">現金</option><option value="PayPay">PayPay</option>
       </select>
     </div>`;
   document.getElementById('importMapFields').innerHTML = html;
@@ -720,7 +720,7 @@ function readModalMap() {
 }
 function readMethodDefault() {
   const el = document.getElementById('map_methodDefault');
-  return el ? el.value : '現金';
+  return el ? el.value : 'オンライン';
 }
 
 function updateImportPreview() {
