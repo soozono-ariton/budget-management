@@ -650,18 +650,40 @@ async function handleImportFile(input) {
   openImportModal();
 }
 
+// 個人情報系の列はプルダウンに出さない（選択中の場合のみ表示）
+const IMPORT_HIDDEN_COLS = ['氏名', '性別', '生年月日', '居住地', '住所', '電話', 'メール', '郵便'];
+function isHiddenCol(label) { return IMPORT_HIDDEN_COLS.some(k => label.includes(k)); }
+
+function colLabel(c) { const h = importState.head[c]; return h ? String(h).trim() : ('列' + (c + 1)); }
+
 function colOptions(selected) {
-  const { head, dataRows } = importState;
-  let html = '<option value="-1"' + (selected < 0 ? ' selected' : '') + '>（なし）</option>';
+  const { head } = importState;
+  let html = '<option value="-1"' + (selected < 0 ? ' selected' : '') + '>（使わない）</option>';
   for (let c = 0; c < head.length; c++) {
-    const label = head[c] ? head[c] : ('列' + (c + 1));
-    const ex = [];
-    for (const r of dataRows) { const v = getCell(r, c); if (v) { ex.push(v.length > 12 ? v.slice(0, 12) + '…' : v); if (ex.length >= 2) break; } }
-    const txt = esc(label + (ex.length ? '（例: ' + ex.join(', ') + '）' : ''));
-    html += '<option value="' + c + '"' + (c === selected ? ' selected' : '') + '>' + txt + '</option>';
+    const label = colLabel(c);
+    if (c !== selected && isHiddenCol(label)) continue;
+    html += '<option value="' + c + '"' + (c === selected ? ' selected' : '') + '>' + esc(label) + '</option>';
   }
   return html;
 }
+
+// 選択中の列の中身サンプル（プルダウンの下に表示）
+function colSample(c) {
+  if (c < 0) return '';
+  const ex = [];
+  for (const r of importState.dataRows) {
+    const v = getCell(r, c).replace(/\s+/g, ' ');
+    if (v) { ex.push(v.length > 20 ? v.slice(0, 20) + '…' : v); if (ex.length >= 3) break; }
+  }
+  return ex.length ? '例：' + ex.join(' ／ ') : '（データなし）';
+}
+function refreshColSamples() {
+  document.querySelectorAll('#importMapFields select[id^="map_"]').forEach(sel => {
+    const hint = document.getElementById(sel.id + '_hint');
+    if (hint) hint.textContent = colSample(parseInt(sel.value, 10));
+  });
+}
+const HINT_STYLE = 'font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
 
 function openImportModal() {
   const m = importState.map;
@@ -669,16 +691,19 @@ function openImportModal() {
     <div style="margin-bottom:10px">
       <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px">${label}${req ? '（必須）' : ''}</label>
       <select id="map_${key}" onchange="updateImportPreview()" style="width:100%">${colOptions(m[key])}</select>
+      <div id="map_${key}_hint" style="${HINT_STYLE}"></div>
     </div>`;
   document.getElementById('importMapFields').innerHTML =
     field('name', 'お名前', true) +
     `<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">ユーザーネーム</label>
        <select id="map_username" onchange="updateImportPreview()" style="width:100%">${colOptions(m.username)}</select>
+       <div id="map_username_hint" style="${HINT_STYLE}"></div>
        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:6px">
          <input type="checkbox" id="map_extract" ${m.extractHandle ? 'checked' : ''} onchange="updateImportPreview()" style="width:auto"> @から始まるIDだけ抜き出す</label></div>` +
     field('amount', '金額', true) +
     `<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">受取方法</label>
        <select id="map_method" onchange="updateImportPreview()" style="width:100%">${colOptions(m.method)}</select>
+       <div id="map_method_hint" style="${HINT_STYLE}"></div>
        <input id="map_methodDefault" value="現金" placeholder="列がない場合の既定（現金/PayPay/オンライン）" oninput="updateImportPreview()" style="width:100%;margin-top:6px"></div>` +
     field('date', '日付') +
     field('recipient', '受取者') +
@@ -697,6 +722,7 @@ function readModalMap() {
 }
 
 function updateImportPreview() {
+  refreshColSamples();
   const map = readModalMap();
   const def = document.getElementById('map_methodDefault').value.trim() || '現金';
   const recs = buildRecords(importState.dataRows, map, def);
