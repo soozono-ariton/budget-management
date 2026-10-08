@@ -1022,13 +1022,29 @@ async function loadIntake() {
   state.intake = error ? [] : (data || []);
 }
 
+let intakeEditing = null;
 function renderIntake() {
   const items = (state.intake || []).filter(e => e.project_id === state.currentProject);
   const card = document.getElementById('intakeCard');
   if (!card) return;
   card.style.display = items.length ? '' : 'none';
   document.getElementById('intakeCount').textContent = items.length ? `（${items.length}件）` : '';
-  document.getElementById('intakeList').innerHTML = items.map(e => `
+  const smallBtn = (label, fn, primary) => `<button type="button" onclick="${fn}" style="padding:6px 10px; border-radius:8px; cursor:pointer; font-size:12px; ${primary ? `border:none; background:${ACCENT}; color:#fff; font-weight:700` : 'border:1px solid var(--border); background:transparent; color:var(--muted)'}">${label}</button>`;
+  const fld = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); color:var(--text); box-sizing:border-box';
+  const lbl = 'display:block; font-size:11px; color:var(--muted); margin:6px 0 2px';
+  document.getElementById('intakeList').innerHTML = items.map(e => e.id === intakeEditing ? `
+    <div style="padding:10px; margin:6px 0; border:1px solid var(--border); border-radius:10px">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 8px">
+        <div><label style="${lbl}">ニックネーム</label><input id="ie_name" value="${esc(e.name)}" maxlength="50" style="${fld}"></div>
+        <div><label style="${lbl}">ユーザー名</label><input id="ie_user" value="${esc(e.username || '')}" maxlength="50" style="${fld}"></div>
+        <div><label style="${lbl}">金額（円）</label><input id="ie_amount" type="number" min="1" value="${e.amount}" style="${fld}"></div>
+        <div><label style="${lbl}">支払方法</label><select id="ie_method" style="${fld}">${['現金', 'PayPay', 'オンライン'].map(m => `<option ${m === e.method ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+      </div>
+      <label style="${lbl}">メモ</label><input id="ie_memo" value="${esc(e.memo || '')}" maxlength="200" style="${fld}">
+      <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:10px">
+        ${smallBtn('キャンセル', 'cancelEditIntake()', false)}${smallBtn('保存', `saveIntake('${e.id}', false)`, false)}${smallBtn('保存して承認', `saveIntake('${e.id}', true)`, true)}
+      </div>
+    </div>` : `
     <div class="item">
       <div class="info">
         <div class="name">${esc(e.name)}</div>
@@ -1036,10 +1052,29 @@ function renderIntake() {
       </div>
       <div class="amount in">${yen(e.amount)}</div>
       <div style="display:flex; gap:4px; flex-shrink:0">
-        <button type="button" onclick="approveIntake('${e.id}')" style="padding:6px 10px; border:none; border-radius:8px; background:${ACCENT}; color:#fff; font-weight:700; cursor:pointer; font-size:12px">承認</button>
-        <button type="button" onclick="rejectIntake('${e.id}')" style="padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px">却下</button>
+        ${smallBtn('承認', `approveIntake('${e.id}')`, true)}${smallBtn('修正', `editIntake('${e.id}')`, false)}${smallBtn('却下', `rejectIntake('${e.id}')`, false)}
       </div>
     </div>`).join('');
+}
+
+function editIntake(id) { intakeEditing = id; renderIntake(); }
+function cancelEditIntake() { intakeEditing = null; renderIntake(); }
+async function saveIntake(id, approve) {
+  const amount = parseInt(document.getElementById('ie_amount').value, 10);
+  const name = document.getElementById('ie_name').value.trim();
+  if (!name || !(amount > 0)) return alert('ニックネームと金額を入力してください');
+  let user = document.getElementById('ie_user').value.trim();
+  if (user && !user.startsWith('@')) user = '@' + user;
+  const { error } = await db.rpc('room_intake_update', {
+    rid: state.room.id, p_pass: state.room.pass, eid: id,
+    pname: name, pusername: user, pamount: amount,
+    pmethod: document.getElementById('ie_method').value,
+    pmemo: document.getElementById('ie_memo').value.trim(),
+  });
+  if (error) return alert('保存に失敗しました: ' + error.message);
+  intakeEditing = null;
+  if (approve) return approveIntake(id);
+  await loadAll();
 }
 
 async function approveIntake(id) {
@@ -1113,7 +1148,7 @@ setInterval(async () => {
   if (!state.room || document.hidden) return;
   const before = JSON.stringify(state.intake.map(e => e.id));
   await loadIntake();
-  if (JSON.stringify(state.intake.map(e => e.id)) !== before) renderIntake();
+  if (!intakeEditing && JSON.stringify(state.intake.map(e => e.id)) !== before) renderIntake();
 }, 15000);
 
 // ===== 本人入力画面 =====

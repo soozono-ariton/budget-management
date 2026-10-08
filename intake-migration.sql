@@ -82,3 +82,13 @@ begin
   insert into intake_entries (project_id, name, username, amount, method, memo) values (v, pname, pusername, pamount, pmethod, pmemo);
   return true;
 end; $$;
+
+-- ===== 承認前の修正（委員側） =====
+create or replace function room_intake_update(rid uuid, p_pass text, eid uuid, pname text, pusername text, pamount integer, pmethod text, pmemo text) returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not room_ok(rid, p_pass) then raise exception 'unauthorized'; end if;
+  if length(trim(coalesce(pname, ''))) = 0 then raise exception 'invalid name'; end if;
+  if pamount is null or pamount < 1 then raise exception 'invalid amount'; end if;
+  update intake_entries e set name = trim(pname), username = trim(coalesce(pusername, '')), amount = pamount, method = pmethod, memo = trim(coalesce(pmemo, ''))
+    from projects p where e.id = eid and p.id = e.project_id and p.room_id = rid;
+end; $$;
