@@ -92,3 +92,26 @@ begin
   update intake_entries e set name = trim(pname), username = trim(coalesce(pusername, '')), amount = pamount, method = pmethod, memo = trim(coalesce(pmemo, ''))
     from projects p where e.id = eid and p.id = e.project_id and p.room_id = rid;
 end; $$;
+
+-- ===== 承認時に受取者を記録（2026-10-08 追加） =====
+drop function if exists room_intake_approve(uuid, text, uuid);
+create or replace function room_intake_approve(rid uuid, p_pass text, eid uuid, precipient text default '') returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not room_ok(rid, p_pass) then raise exception 'unauthorized'; end if;
+  insert into donations (project_id, name, username, amount, method, recipient, memo, date)
+    select e.project_id, e.name, e.username, e.amount, e.method, trim(coalesce(precipient, '')), coalesce(e.memo, ''), (e.created_at at time zone 'Asia/Tokyo')::date
+    from intake_entries e join projects p on p.id = e.project_id
+    where e.id = eid and p.room_id = rid;
+  delete from intake_entries e using projects p where e.id = eid and p.id = e.project_id and p.room_id = rid;
+end; $$;
+
+-- ===== 登録済みカンパの編集（2026-10-08 追加） =====
+create or replace function room_update_donation(rid uuid, p_pass text, did uuid, pname text, pusername text, pamount integer, pmethod text, precipient text, pmemo text, pdate date) returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not room_ok(rid, p_pass) then raise exception 'unauthorized'; end if;
+  if length(trim(coalesce(pname, ''))) = 0 then raise exception 'invalid name'; end if;
+  if pamount is null or pamount < 1 then raise exception 'invalid amount'; end if;
+  update donations d set name = trim(pname), username = trim(coalesce(pusername, '')), amount = pamount, method = pmethod,
+    recipient = trim(coalesce(precipient, '')), memo = trim(coalesce(pmemo, '')), date = coalesce(pdate, d.date)
+    from projects p where d.id = did and p.id = d.project_id and p.room_id = rid;
+end; $$;

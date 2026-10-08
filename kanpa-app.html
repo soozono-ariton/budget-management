@@ -250,6 +250,7 @@
           <button type="button" class="btn" style="padding:6px 12px; font-size:13px" onclick="approveAllIntake()">すべて承認</button>
         </div>
         <p style="font-size:12px; color:var(--muted); margin:0 0 8px">QRから本人が入力した内容です。確認して承認するとカンパ一覧に入ります。</p>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px"><label for="intakeRecipient" style="font-size:12px; font-weight:600; color:var(--muted); white-space:nowrap">受取者</label><input id="intakeRecipient" placeholder="例：主催たろう（承認時に記録）" oninput="saveIntakeRecipient()" style="flex:1; min-width:0; padding:8px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); color:var(--text)"></div>
         <div id="intakeList"></div>
       </div>
       <div class="card">
@@ -869,13 +870,14 @@ function render() {
 
   const list = (items, cls, delFn) => items.length === 0
     ? '<div class="empty">まだ登録がありません</div>'
-    : items.map(d => `
+    : items.map(d => cls === 'in' && d.id === donationEditing ? donationEditForm(d) : `
       <div class="item">
         <div class="info">
           <div class="name">${esc(d.name)}</div>
           <div class="meta">${d.date}${d.username ? ' ・ ' + esc(d.username) : ''}${d.method ? ' ・ ' + esc(d.method) : ''}${d.recipient ? ' ・ 受取:' + esc(d.recipient) : ''}${d.handler ? ' ・ 対応:' + esc(d.handler) : ''}${d.memo ? ' ・ ' + esc(d.memo) : ''}</div>
         </div>
         <div class="amount ${cls}">${cls === 'in' ? '+' : '−'}${yen(d.amount)}</div>
+        ${cls === 'in' ? `<button class="del" onclick="editDonation('${d.id}')" title="編集">✎</button>` : ''}
         <button class="del" onclick="${delFn}('${d.id}')" title="削除">✕</button>
       </div>`).join('');
 
@@ -969,6 +971,49 @@ function render() {
   renderIntake();
 }
 
+// ===== 登録済みカンパの編集 =====
+let donationEditing = null;
+function donationEditForm(d) {
+  const fld = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); color:var(--text); box-sizing:border-box';
+  const lbl = 'display:block; font-size:11px; color:var(--muted); margin:6px 0 2px';
+  const methods = ['現金', 'PayPay', 'オンライン'];
+  if (d.method && !methods.includes(d.method)) methods.push(d.method);
+  const b = (label, fn, primary) => `<button type="button" onclick="${fn}" style="padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; ${primary ? 'border:none; background:var(--primary, var(--accent, #e05297)); color:#fff; font-weight:700' : 'border:1px solid var(--border); background:transparent; color:var(--muted)'}">${label}</button>`;
+  return `
+    <div style="padding:10px; margin:6px 0; border:2px solid var(--primary, var(--accent, #e05297)); border-radius:10px">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 8px">
+        <div><label style="${lbl}">ニックネーム</label><input id="de_name" value="${esc(d.name)}" maxlength="50" style="${fld}"></div>
+        <div><label style="${lbl}">ユーザー名</label><input id="de_user" value="${esc(d.username || '')}" maxlength="50" style="${fld}"></div>
+        <div><label style="${lbl}">金額（円）</label><input id="de_amount" type="number" min="1" value="${d.amount}" style="${fld}"></div>
+        <div><label style="${lbl}">受取方法</label><select id="de_method" style="${fld}">${methods.map(m => `<option ${m === d.method ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+        <div><label style="${lbl}">日付</label><input id="de_date" type="date" value="${esc(d.date || '')}" style="${fld}"></div>
+        <div><label style="${lbl}">受取者</label><input id="de_recipient" value="${esc(d.recipient || '')}" style="${fld}"></div>
+      </div>
+      <label style="${lbl}">メモ</label><input id="de_memo" value="${esc(d.memo || '')}" maxlength="200" style="${fld}">
+      <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:10px">${b('キャンセル', 'cancelEditDonation()', false)}${b('保存', `saveDonation('${d.id}')`, true)}</div>
+    </div>`;
+}
+function editDonation(id) { donationEditing = id; render(); }
+function cancelEditDonation() { donationEditing = null; render(); }
+async function saveDonation(id) {
+  const name = document.getElementById('de_name').value.trim();
+  const amount = parseInt(document.getElementById('de_amount').value, 10);
+  if (!name || !(amount > 0)) return alert('ニックネームと金額を入力してください');
+  let user = document.getElementById('de_user').value.trim();
+  if (user && !user.startsWith('@')) user = '@' + user;
+  const { error } = await db.rpc('room_update_donation', {
+    rid: state.room.id, p_pass: state.room.pass, did: id,
+    pname: name, pusername: user, pamount: amount,
+    pmethod: document.getElementById('de_method').value,
+    precipient: document.getElementById('de_recipient').value.trim(),
+    pmemo: document.getElementById('de_memo').value.trim(),
+    pdate: document.getElementById('de_date').value || null,
+  });
+  if (error) return alert('保存に失敗しました: ' + error.message);
+  donationEditing = null;
+  await loadAll();
+}
+
 // ===== QR受付（カンパした本人が自分で入力） =====
 const ENTRY_INPUT = 'width:100%; padding:12px; border:1px solid var(--border); border-radius:10px; font-size:16px; background:var(--card); color:var(--text); box-sizing:border-box';
 const ENTRY_LABEL = 'display:block; font-size:12px; font-weight:600; color:var(--muted); margin:12px 0 4px';
@@ -988,6 +1033,8 @@ function renderIntake() {
   const card = document.getElementById('intakeCard');
   if (!card) return;
   card.style.display = items.length ? '' : 'none';
+  const rEl = document.getElementById('intakeRecipient');
+  if (rEl && !rEl.value && document.activeElement !== rEl) { try { rEl.value = localStorage.getItem(RECIPIENT_KEY) || ''; } catch (e) {} }
   document.getElementById('intakeCount').textContent = items.length ? `（${items.length}件）` : '';
   const smallBtn = (label, fn, primary) => `<button type="button" onclick="${fn}" style="padding:6px 10px; border-radius:8px; cursor:pointer; font-size:12px; ${primary ? `border:none; background:${ACCENT}; color:#fff; font-weight:700` : 'border:1px solid var(--border); background:transparent; color:var(--muted)'}">${label}</button>`;
   const fld = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); color:var(--text); box-sizing:border-box';
@@ -1000,7 +1047,10 @@ function renderIntake() {
         <div><label style="${lbl}">金額（円）</label><input id="ie_amount" type="number" min="1" value="${e.amount}" style="${fld}"></div>
         <div><label style="${lbl}">支払方法</label><select id="ie_method" style="${fld}">${['現金', 'PayPay', 'オンライン'].map(m => `<option ${m === e.method ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
       </div>
-      <label style="${lbl}">メモ</label><input id="ie_memo" value="${esc(e.memo || '')}" maxlength="200" style="${fld}">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 8px">
+        <div><label style="${lbl}">メモ</label><input id="ie_memo" value="${esc(e.memo || '')}" maxlength="200" style="${fld}"></div>
+        <div><label style="${lbl}">受取者（承認時）</label><input id="ie_recipient" value="${esc(getIntakeRecipient())}" style="${fld}"></div>
+      </div>
       <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:10px">
         ${smallBtn('キャンセル', 'cancelEditIntake()', false)}${smallBtn('保存', `saveIntake('${e.id}', false)`, false)}${smallBtn('保存して承認', `saveIntake('${e.id}', true)`, true)}
       </div>
@@ -1033,12 +1083,21 @@ async function saveIntake(id, approve) {
   });
   if (error) return alert('保存に失敗しました: ' + error.message);
   intakeEditing = null;
-  if (approve) return approveIntake(id);
+  if (approve) return approveIntake(id, document.getElementById('ie_recipient').value.trim());
   await loadAll();
 }
 
-async function approveIntake(id) {
-  const { error } = await db.rpc('room_intake_approve', { rid: state.room.id, p_pass: state.room.pass, eid: id });
+const RECIPIENT_KEY = 'kanpa_intake_recipient';
+function getIntakeRecipient() {
+  const el = document.getElementById('intakeRecipient');
+  if (el && el.value.trim()) return el.value.trim();
+  try { return localStorage.getItem(RECIPIENT_KEY) || ''; } catch (e) { return ''; }
+}
+function saveIntakeRecipient() {
+  try { localStorage.setItem(RECIPIENT_KEY, document.getElementById('intakeRecipient').value.trim()); } catch (e) {}
+}
+async function approveIntake(id, recipient) {
+  const { error } = await db.rpc('room_intake_approve', { rid: state.room.id, p_pass: state.room.pass, eid: id, precipient: recipient ?? getIntakeRecipient() });
   if (error) return alert('承認に失敗しました: ' + error.message);
   await loadAll();
 }
@@ -1051,7 +1110,8 @@ async function rejectIntake(id) {
 async function approveAllIntake() {
   const items = state.intake.filter(e => e.project_id === state.currentProject);
   if (!items.length || !confirm(`${items.length}件をすべて承認します。よろしいですか？`)) return;
-  for (const e of items) await db.rpc('room_intake_approve', { rid: state.room.id, p_pass: state.room.pass, eid: e.id });
+  const recipient = getIntakeRecipient();
+  for (const e of items) await db.rpc('room_intake_approve', { rid: state.room.id, p_pass: state.room.pass, eid: e.id, precipient: recipient });
   await loadAll();
 }
 
