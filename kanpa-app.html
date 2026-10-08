@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="カンパ管理">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root {
     --primary: #e05297;
@@ -217,7 +218,7 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
           <h2 style="margin-bottom:0">カンパを登録</h2>
-          <button type="button" class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="document.getElementById('csvInput').click()">📄 ファイル取込</button>
+          <div style="display:flex; gap:6px"><button type="button" class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="openIntakeModal()">📱 QR受付</button><button type="button" class="btn secondary" style="padding:6px 12px; font-size:13px" onclick="document.getElementById('csvInput').click()">📄 ファイル取込</button></div>
         </div>
         <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleImportFile(this)">
         <form onsubmit="return addDonation(event)">
@@ -242,6 +243,14 @@
           <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
           <button class="btn" style="width:100%">登録する</button>
         </form>
+      </div>
+      <div class="card" id="intakeCard" style="display:none; border:2px solid var(--primary, var(--accent, #e05297))">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px">
+          <h2 style="margin-bottom:0">📱 受付待ち <span id="intakeCount"></span></h2>
+          <button type="button" class="btn" style="padding:6px 12px; font-size:13px" onclick="approveAllIntake()">すべて承認</button>
+        </div>
+        <p style="font-size:12px; color:var(--muted); margin:0 0 8px">QRから本人が入力した内容です。確認して承認するとカンパ一覧に入ります。</p>
+        <div id="intakeList"></div>
       </div>
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
@@ -326,6 +335,21 @@
   <p class="note">データはSupabase（クラウドDB）に保存されます。</p>
 </div>
 
+<div id="intakeModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:200; align-items:center; justify-content:center; padding:16px;">
+  <div style="background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:16px; max-width:420px; width:100%; max-height:92vh; overflow:auto; padding:20px; text-align:center;">
+    <h2 style="font-size:16px; margin:0 0 4px;">📱 QR受付</h2>
+    <p id="intakeProjName" style="font-size:12px; color:var(--muted); margin:0 0 12px;"></p>
+    <div id="intakeBody"></div>
+    <button type="button" onclick="closeIntakeModal()" style="margin-top:12px; width:100%; padding:12px; border:1px solid var(--border); border-radius:10px; background:transparent; color:var(--text); cursor:pointer;">閉じる</button>
+  </div>
+</div>
+
+<div id="entryView" style="display:none; max-width:480px; margin:0 auto; padding:16px;">
+  <div style="background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:16px; padding:20px; margin-top:16px;">
+    <div id="entryBody"></div>
+  </div>
+</div>
+
 <div id="importModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:200; align-items:center; justify-content:center; padding:16px;">
   <div style="background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:16px; max-width:520px; width:100%; max-height:88vh; overflow:auto; padding:20px;">
     <h2 style="font-size:16px; margin:0 0 4px;">取り込み内容の確認</h2>
@@ -397,6 +421,7 @@ async function loadAll() {
   state.donations = data.donations;
   state.expenses = data.expenses;
   state.budgets = data.budgets;
+  await loadIntake();
   if ((!state.currentProject || !state.projects.some(p => p.id === state.currentProject)) && state.projects.length > 0) {
     state.currentProject = state.projects[0].id;
   }
@@ -941,6 +966,183 @@ function render() {
       <div class="amount ${pin - pout >= 0 ? 'in' : 'out'}">${yen(pin - pout)}</div>
     </div>`;
   }).join('');
+  renderIntake();
+}
+
+// ===== QR受付（カンパした本人が自分で入力） =====
+const ENTRY_INPUT = 'width:100%; padding:12px; border:1px solid var(--border); border-radius:10px; font-size:16px; background:var(--card); color:var(--text); box-sizing:border-box';
+const ENTRY_LABEL = 'display:block; font-size:12px; font-weight:600; color:var(--muted); margin:12px 0 4px';
+const ACCENT = 'var(--primary, var(--accent, #e05297))';
+state.intake = [];
+
+function entryUrl(token) { return location.origin + location.pathname + '?entry=' + token; }
+
+async function loadIntake() {
+  const { data, error } = await db.rpc('room_intake_list', { rid: state.room.id, p_pass: state.room.pass });
+  state.intake = error ? [] : (data || []);
+}
+
+function renderIntake() {
+  const items = (state.intake || []).filter(e => e.project_id === state.currentProject);
+  const card = document.getElementById('intakeCard');
+  if (!card) return;
+  card.style.display = items.length ? '' : 'none';
+  document.getElementById('intakeCount').textContent = items.length ? `（${items.length}件）` : '';
+  document.getElementById('intakeList').innerHTML = items.map(e => `
+    <div class="item">
+      <div class="info">
+        <div class="name">${esc(e.name)}</div>
+        <div class="meta">${e.username ? esc(e.username) + ' ・ ' : ''}${esc(e.method || '')}${e.memo ? ' ・ ' + esc(e.memo) : ''}</div>
+      </div>
+      <div class="amount in">${yen(e.amount)}</div>
+      <div style="display:flex; gap:4px; flex-shrink:0">
+        <button type="button" onclick="approveIntake('${e.id}')" style="padding:6px 10px; border:none; border-radius:8px; background:${ACCENT}; color:#fff; font-weight:700; cursor:pointer; font-size:12px">承認</button>
+        <button type="button" onclick="rejectIntake('${e.id}')" style="padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px">却下</button>
+      </div>
+    </div>`).join('');
+}
+
+async function approveIntake(id) {
+  const { error } = await db.rpc('room_intake_approve', { rid: state.room.id, p_pass: state.room.pass, eid: id });
+  if (error) return alert('承認に失敗しました: ' + error.message);
+  await loadAll();
+}
+async function rejectIntake(id) {
+  if (!confirm('この受付内容を却下（削除）しますか？')) return;
+  const { error } = await db.rpc('room_intake_reject', { rid: state.room.id, p_pass: state.room.pass, eid: id });
+  if (error) return alert('却下に失敗しました: ' + error.message);
+  await loadAll();
+}
+async function approveAllIntake() {
+  const items = state.intake.filter(e => e.project_id === state.currentProject);
+  if (!items.length || !confirm(`${items.length}件をすべて承認します。よろしいですか？`)) return;
+  for (const e of items) await db.rpc('room_intake_approve', { rid: state.room.id, p_pass: state.room.pass, eid: e.id });
+  await loadAll();
+}
+
+function openIntakeModal() {
+  if (!state.currentProject) return alert('先に企画を作成してください');
+  document.getElementById('intakeModal').style.display = 'flex';
+  renderIntakeModal();
+}
+function closeIntakeModal() { document.getElementById('intakeModal').style.display = 'none'; }
+
+function renderIntakeModal() {
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  document.getElementById('intakeProjName').textContent = proj ? '企画: ' + proj.name : '';
+  const body = document.getElementById('intakeBody');
+  const btn = (label, fn, primary) => `<button type="button" onclick="${fn}" style="width:100%; margin-top:8px; padding:12px; border-radius:10px; cursor:pointer; font-weight:700; ${primary ? `border:none; background:${ACCENT}; color:#fff` : 'border:1px solid var(--border); background:transparent; color:var(--text)'}">${label}</button>`;
+  if (!proj || !proj.intake_token) {
+    body.innerHTML = `<p style="font-size:13px; line-height:1.7; text-align:left">受付を開始するとQRコードが表示されます。カンパしてくれた人がスマホで読み込むと、ニックネーム・ユーザー名・金額などを自分で入力できます。<br>入力された内容は「受付待ち」に入り、承認するとカンパ一覧に登録されます。</p>`
+      + btn('受付を開始する', 'startIntake()', true);
+    return;
+  }
+  const url = entryUrl(proj.intake_token);
+  body.innerHTML = `<div id="intakeQr" style="display:inline-block; padding:12px; background:#fff; border-radius:12px"></div>
+    <p style="font-size:13px; font-weight:700; margin:10px 0 4px">スマホのカメラで読み込んでください</p>
+    <p style="font-size:11px; color:var(--muted); word-break:break-all; margin:0">${esc(url)}</p>`
+    + btn('URLをコピー', 'copyIntakeUrl()', false)
+    + btn('QRを作り直す（今のQRは使えなくなります）', 'startIntake(true)', false)
+    + btn('受付を終了する', 'stopIntake()', false);
+  if (window.QRCode) new QRCode(document.getElementById('intakeQr'), { text: url, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+  else document.getElementById('intakeQr').textContent = 'QRコードを表示できませんでした';
+}
+
+async function startIntake(renew) {
+  if (renew && !confirm('QRを作り直すと、今表示しているQRは使えなくなります。よろしいですか？')) return;
+  const { error } = await db.rpc('room_intake_start', { rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject });
+  if (error) return alert('受付を開始できませんでした: ' + error.message);
+  await loadAll();
+  renderIntakeModal();
+}
+async function stopIntake() {
+  if (!confirm('受付を終了しますか？QRから入力できなくなります（受付待ちの内容は残ります）。')) return;
+  const { error } = await db.rpc('room_intake_stop', { rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject });
+  if (error) return alert('受付を終了できませんでした: ' + error.message);
+  await loadAll();
+  renderIntakeModal();
+}
+function copyIntakeUrl() {
+  const proj = state.projects.find(p => p.id === state.currentProject);
+  if (!proj || !proj.intake_token) return;
+  navigator.clipboard.writeText(entryUrl(proj.intake_token)).then(() => alert('URLをコピーしました'), () => prompt('このURLをコピーしてください', entryUrl(proj.intake_token)));
+}
+
+// 受付待ちを定期的に更新（画面を開いている間）
+setInterval(async () => {
+  if (!state.room || document.hidden) return;
+  const before = JSON.stringify(state.intake.map(e => e.id));
+  await loadIntake();
+  if (JSON.stringify(state.intake.map(e => e.id)) !== before) renderIntake();
+}, 15000);
+
+// ===== 本人入力画面 =====
+let entryToken = null;
+async function showEntry(token) {
+  entryToken = token;
+  [...document.body.children].forEach(el => { if (el.tagName !== 'SCRIPT' && el.tagName !== 'HEADER' && el.id !== 'entryView') el.style.display = 'none'; });
+  document.querySelectorAll('header .room-info, header button').forEach(el => el.style.display = 'none');
+  document.getElementById('entryView').style.display = '';
+  const body = document.getElementById('entryBody');
+  body.innerHTML = '<p style="text-align:center; color:var(--muted)">読み込み中…</p>';
+  const { data, error } = await db.rpc('intake_info', { tok: token });
+  if (error || !data) {
+    body.innerHTML = '<h2 style="font-size:17px; margin:0 0 8px">受付は終了しました</h2><p style="font-size:13px; color:var(--muted)">このQRコードは現在使えません。委員の方に声をかけてください。</p>';
+    return;
+  }
+  renderEntryForm(data.project);
+}
+
+function renderEntryForm(projectName) {
+  document.getElementById('entryBody').innerHTML = `
+    <h2 style="font-size:17px; margin:0 0 4px">カンパ受付</h2>
+    <p style="font-size:13px; color:var(--muted); margin:0 0 4px">${esc(projectName)}</p>
+    <p style="font-size:12px; color:var(--muted); margin:0">ご協力ありがとうございます！下の内容を入力して送信してください。</p>
+    <form onsubmit="return submitEntry(event)">
+      <label style="${ENTRY_LABEL}">ニックネーム（必須）</label>
+      <input id="enName" required maxlength="50" placeholder="例：みかん" style="${ENTRY_INPUT}">
+      <label style="${ENTRY_LABEL}">ユーザー名（X・インスタなどの@ID）</label>
+      <input id="enUser" maxlength="50" placeholder="例：@mikan_123" autocapitalize="off" autocorrect="off" style="${ENTRY_INPUT}">
+      <label style="${ENTRY_LABEL}">金額（円・必須）</label>
+      <input id="enAmount" type="number" inputmode="numeric" min="1" max="1000000" required placeholder="3000" style="${ENTRY_INPUT}">
+      <label style="${ENTRY_LABEL}">お支払い方法</label>
+      <select id="enMethod" style="${ENTRY_INPUT}">
+        <option value="現金">現金</option><option value="PayPay">PayPay</option><option value="オンライン">オンライン</option>
+      </select>
+      <label style="${ENTRY_LABEL}">メッセージ・メモ（任意）</label>
+      <input id="enMemo" maxlength="200" placeholder="任意" style="${ENTRY_INPUT}">
+      <button id="enSubmit" style="width:100%; margin-top:18px; padding:14px; border:none; border-radius:12px; background:${ACCENT}; color:#fff; font-size:16px; font-weight:700; cursor:pointer">送信する</button>
+    </form>
+    <p style="font-size:11px; color:var(--muted); margin:12px 0 0">※ 入力内容は企画の運営（生誕委員）だけが確認します。本名は入力しないでください。</p>`;
+}
+
+async function submitEntry(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById('enSubmit');
+  btn.disabled = true; btn.textContent = '送信中…';
+  let user = document.getElementById('enUser').value.trim();
+  if (user && !user.startsWith('@')) user = '@' + user;
+  const { data, error } = await db.rpc('intake_submit', {
+    tok: entryToken,
+    pname: document.getElementById('enName').value.trim(),
+    pusername: user,
+    pamount: parseInt(document.getElementById('enAmount').value, 10),
+    pmethod: document.getElementById('enMethod').value,
+    pmemo: document.getElementById('enMemo').value.trim(),
+  });
+  if (error || !data) {
+    btn.disabled = false; btn.textContent = '送信する';
+    alert(error ? '送信できませんでした。入力内容を確認してもう一度お試しください。' : '受付は終了しました。委員の方に声をかけてください。');
+    return false;
+  }
+  document.getElementById('entryBody').innerHTML = `
+    <div style="text-align:center; padding:12px 0">
+      <div style="font-size:44px">🎉</div>
+      <h2 style="font-size:18px; margin:8px 0">送信しました！</h2>
+      <p style="font-size:13px; color:var(--muted); margin:0 0 16px">ご協力ありがとうございます。委員が確認して登録します。</p>
+      <button type="button" onclick="showEntry(entryToken)" style="padding:12px 16px; border:1px solid var(--border); border-radius:10px; background:transparent; color:var(--text); cursor:pointer">続けて別の人が入力する</button>
+    </div>`;
+  return false;
 }
 
 function esc(s) {
@@ -952,12 +1154,15 @@ if (!configured) {
   document.getElementById('setupWarning').style.display = '';
 } else {
   db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const entryParam = new URLSearchParams(location.search).get('entry');
+  if (entryParam) { showEntry(entryParam); } else {
   const savedRoom = localStorage.getItem(ROOM_KEY);
   if (savedRoom) {
     state.room = JSON.parse(savedRoom);
     showApp();
   } else {
     document.getElementById('roomGate').style.display = '';
+  }
   }
 }
 </script>
