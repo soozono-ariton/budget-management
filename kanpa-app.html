@@ -329,7 +329,7 @@
 <div id="importModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:200; align-items:center; justify-content:center; padding:16px;">
   <div style="background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:16px; max-width:520px; width:100%; max-height:88vh; overflow:auto; padding:20px;">
     <h2 style="font-size:16px; margin:0 0 4px;">取り込み内容の確認</h2>
-    <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">各項目に対応する列を選んでください。お名前は本名ではなくニックネームの列を自動で選んでいます。下のプレビューで確認できます。</p>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">ニックネームとユーザー名（@ID）の列を自動で選んでいます。違っていたら選び直してください。金額は自動で読み取ります。</p>
     <div id="importMapFields"></div>
     <div style="margin-top:8px; font-size:13px;">
       <div style="font-weight:700; margin-bottom:4px;">プレビュー</div>
@@ -687,44 +687,46 @@ const HINT_STYLE = 'font-size:11px;color:var(--muted);margin-top:4px;white-space
 
 function openImportModal() {
   const m = importState.map;
-  const field = (key, label, req) => `
-    <div style="margin-bottom:10px">
-      <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px">${label}${req ? '（必須）' : ''}</label>
+  const sel = (key, label) => `
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px">${label}</label>
       <select id="map_${key}" onchange="updateImportPreview()" style="width:100%">${colOptions(m[key])}</select>
       <div id="map_${key}_hint" style="${HINT_STYLE}"></div>
     </div>`;
-  document.getElementById('importMapFields').innerHTML =
-    field('name', 'お名前', true) +
-    `<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">ユーザーネーム</label>
-       <select id="map_username" onchange="updateImportPreview()" style="width:100%">${colOptions(m.username)}</select>
-       <div id="map_username_hint" style="${HINT_STYLE}"></div>
-       <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:6px">
-         <input type="checkbox" id="map_extract" ${m.extractHandle ? 'checked' : ''} onchange="updateImportPreview()" style="width:auto"> @から始まるIDだけ抜き出す</label></div>` +
-    field('amount', '金額', true) +
-    `<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">受取方法</label>
-       <select id="map_method" onchange="updateImportPreview()" style="width:100%">${colOptions(m.method)}</select>
-       <div id="map_method_hint" style="${HINT_STYLE}"></div>
-       <input id="map_methodDefault" value="現金" placeholder="列がない場合の既定（現金/PayPay/オンライン）" oninput="updateImportPreview()" style="width:100%;margin-top:6px"></div>` +
-    field('date', '日付') +
-    field('recipient', '受取者') +
-    field('memo', 'メモ');
+  let html = sel('name', 'ニックネームの列') + sel('username', 'ユーザー名（@〜）の列');
+  // 金額は自動判定できなかった時だけ選ばせる
+  if (m.amount < 0) html += sel('amount', '金額の列');
+  // 受取方法の列がない場合のみ、一括で選ぶ
+  if (m.method < 0) html += `
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px">受取方法（全件まとめて）</label>
+      <select id="map_methodDefault" onchange="updateImportPreview()" style="width:100%">
+        <option value="現金">現金</option><option value="PayPay">PayPay</option><option value="オンライン">オンライン</option>
+      </select>
+    </div>`;
+  document.getElementById('importMapFields').innerHTML = html;
   document.getElementById('importModal').style.display = 'flex';
   updateImportPreview();
 }
 
 function readModalMap() {
-  const v = id => parseInt(document.getElementById(id).value, 10);
-  return {
-    name: v('map_name'), username: v('map_username'), amount: v('map_amount'),
-    method: v('map_method'), date: v('map_date'), recipient: v('map_recipient'), memo: v('map_memo'),
-    extractHandle: document.getElementById('map_extract').checked,
-  };
+  const m = Object.assign({}, importState.map);
+  const v = id => { const el = document.getElementById(id); return el ? parseInt(el.value, 10) : null; };
+  const name = v('map_name'); if (name !== null) m.name = name;
+  const amount = v('map_amount'); if (amount !== null) m.amount = amount;
+  const username = v('map_username'); if (username !== null) m.username = username;
+  m.extractHandle = true; // 列の中から @ID だけ抜き出す
+  return m;
+}
+function readMethodDefault() {
+  const el = document.getElementById('map_methodDefault');
+  return el ? el.value : '現金';
 }
 
 function updateImportPreview() {
   refreshColSamples();
   const map = readModalMap();
-  const def = document.getElementById('map_methodDefault').value.trim() || '現金';
+  const def = readMethodDefault();
   const recs = buildRecords(importState.dataRows, map, def);
   const box = document.getElementById('importPreview');
   if (recs.length === 0) { box.innerHTML = '<span style="color:var(--red)">この設定では取り込めるデータがありません（お名前と1以上の金額が必要）</span>'; return; }
@@ -736,8 +738,8 @@ function closeImportModal() { document.getElementById('importModal').style.displ
 
 async function confirmImport() {
   const map = readModalMap();
-  if (map.name < 0 || map.amount < 0) return alert('「お名前」と「金額」の列を選んでください。');
-  const def = document.getElementById('map_methodDefault').value.trim() || '現金';
+  if (map.name < 0 || map.amount < 0) return alert('ニックネーム（と金額）の列を選んでください。');
+  const def = readMethodDefault();
   const recs = buildRecords(importState.dataRows, map, def);
   if (recs.length === 0) return alert('取り込めるデータがありません。');
   if (!confirm(`${recs.length}件のカンパを取り込みます。よろしいですか？`)) return;
