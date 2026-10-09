@@ -252,21 +252,15 @@
           <div class="row"><label>お名前（ニックネーム可）</label><input id="dName" required placeholder="例：みかん"></div>
           <div class="row"><label>ユーザーネーム</label><input id="dUsername" placeholder="例：@mikan_123"></div>
         </div>
+        <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
         <div class="grid2">
-          <div class="row"><label>金額（円）</label><input id="dAmount" type="number" min="1" required placeholder="3000"></div>
-          <div class="row"><label>受取方法</label>
-            <select id="dMethod">
-              <option value="現金">現金</option>
-              <option value="PayPay">PayPay</option>
-              <option value="オンライン">オンライン</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid2">
+          <div class="row"><label>受取方法</label> <select id="dMethod"> <option value="現金">現金</option> <option value="PayPay">PayPay</option> <option value="オンライン">オンライン</option> </select> </div>
           <div class="row"><label>日付</label><input id="dDate" type="date"></div>
-          <div class="row"><label>受取者</label><input id="dRecipient" placeholder="例：主催たろう"></div>
         </div>
-        <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
+        <div class="grid2">
+          <div class="row"><label>受取者</label><input id="dRecipient" placeholder="例：主催たろう"></div>
+          <div class="row"><label>メモ</label><input id="dMemo" placeholder="任意"></div>
+        </div>
         <button class="btn" style="width:100%">登録する</button>
       </form>
     </div>
@@ -802,6 +796,7 @@ async function delBudget(id) {
 // ===== カンパ =====
 async function addDonation(ev) {
   ev.preventDefault();
+  if (!(amountValue('dAmount') > 0)) { alert('金額を選んでください'); return false; }
   const btn = ev.target.querySelector('button');
   btn.disabled = true;
   const { error } = await db.rpc('room_add_donation', {
@@ -817,6 +812,7 @@ async function addDonation(ev) {
   btn.disabled = false;
   if (error) return alert('登録に失敗しました: ' + error.message);
   ev.target.reset();
+  resetAmountChips('dAmount');
   await loadAll();
   return false;
 }
@@ -1010,6 +1006,37 @@ function render() {
   }).join('');
   renderIntake();
 }
+
+// ===== 金額の選択ボタン（1,000〜20,000円＋その他） =====
+const AMOUNT_PRESETS = [1000, 3000, 5000, 10000, 20000];
+function setupAmountChips(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input || input.dataset.chips) return;
+  input.dataset.chips = '1';
+  input.required = false;
+  const box = document.createElement('div');
+  box.id = inputId + '_chips';
+  box.style.cssText = 'display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; margin-bottom:6px';
+  box.innerHTML = AMOUNT_PRESETS.map(v => `<button type="button" data-v="${v}">${v.toLocaleString('ja-JP')}円</button>`).join('')
+    + '<button type="button" data-v="other">その他</button>';
+  input.parentNode.insertBefore(box, input);
+  box.querySelectorAll('button').forEach(b => b.onclick = () => pickAmount(inputId, b.dataset.v));
+  resetAmountChips(inputId);
+}
+function pickAmount(inputId, v) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(inputId + '_chips');
+  box.querySelectorAll('button').forEach(b => {
+    const on = b.dataset.v === String(v);
+    b.style.cssText = 'padding:12px 4px; border-radius:10px; font-size:15px; font-weight:700; cursor:pointer; font-variant-numeric:tabular-nums; '
+      + (on ? `border:2px solid ${ACCENT}; background:${ACCENT}; color:#fff` : 'border:1px solid var(--border); background:var(--card); color:var(--text)');
+  });
+  if (v === 'other') { input.style.display = ''; input.value = ''; input.placeholder = '金額を入力'; input.focus(); }
+  else if (v) { input.style.display = 'none'; input.value = v; }
+  else { input.style.display = 'none'; input.value = ''; }
+}
+function resetAmountChips(inputId) { pickAmount(inputId, null); }
+function amountValue(inputId) { return parseInt(document.getElementById(inputId).value, 10); }
 
 // ===== 登録済みカンパの編集 =====
 let donationEditing = null;
@@ -1239,7 +1266,7 @@ function renderEntryForm(projectName) {
       <label style="${ENTRY_LABEL}">ユーザー名（X・インスタなどの@ID）</label>
       <input id="enUser" maxlength="50" placeholder="例：@mikan_123" autocapitalize="off" autocorrect="off" style="${ENTRY_INPUT}">
       <label style="${ENTRY_LABEL}">金額（円・必須）</label>
-      <input id="enAmount" type="number" inputmode="numeric" min="1" max="1000000" required placeholder="3000" style="${ENTRY_INPUT}">
+      <div><input id="enAmount" type="number" inputmode="numeric" min="1" max="1000000" placeholder="金額を入力" style="${ENTRY_INPUT}"></div>
       <label style="${ENTRY_LABEL}">お支払い方法</label>
       <select id="enMethod" style="${ENTRY_INPUT}">
         <option value="現金">現金</option><option value="PayPay">PayPay</option><option value="オンライン">オンライン</option>
@@ -1249,10 +1276,12 @@ function renderEntryForm(projectName) {
       <button id="enSubmit" style="width:100%; margin-top:18px; padding:14px; border:none; border-radius:12px; background:${ACCENT}; color:#fff; font-size:16px; font-weight:700; cursor:pointer">送信する</button>
     </form>
     <p style="font-size:11px; color:var(--muted); margin:12px 0 0">※ 入力内容は企画の運営（生誕委員）だけが確認します。本名は入力しないでください。</p>`;
+  setupAmountChips('enAmount');
 }
 
 async function submitEntry(ev) {
   ev.preventDefault();
+  if (!(amountValue('enAmount') > 0)) { alert('金額を選んでください'); return false; }
   const btn = document.getElementById('enSubmit');
   btn.disabled = true; btn.textContent = '送信中…';
   let user = document.getElementById('enUser').value.trim();
@@ -1261,7 +1290,7 @@ async function submitEntry(ev) {
     tok: entryToken,
     pname: document.getElementById('enName').value.trim(),
     pusername: user,
-    pamount: parseInt(document.getElementById('enAmount').value, 10),
+    pamount: amountValue('enAmount'),
     pmethod: document.getElementById('enMethod').value,
     pmemo: document.getElementById('enMemo').value.trim(),
   });
@@ -1283,6 +1312,8 @@ async function submitEntry(ev) {
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+setupAmountChips('dAmount');
 
 // ===== 起動 =====
 initAccent();
