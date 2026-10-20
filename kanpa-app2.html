@@ -341,6 +341,31 @@
       <div id="goalProgress"></div>
     </div>
     <div class="card">
+      <h2>👛 預かり金（受取者ごと）</h2>
+      <p style="font-size:12px; color:var(--muted); margin:-4px 0 10px">受け取ったカンパ ＋ 受け取った分 − 渡した分 − 経費で支払った分（経費の「対応者」）</p>
+      <div id="holderList"></div>
+    </div>
+    <div class="card">
+      <h2>💸 お金を渡した（付け替え）</h2>
+      <form onsubmit="return addTransfer(event)">
+        <div class="grid2">
+          <div class="row"><label>渡した人</label><select id="tFrom" onchange="onTransferFrom()"></select></div>
+          <div class="row"><label>受け取った人</label><input id="tTo" list="peopleList" required placeholder="例：会計はなこ"></div>
+        </div>
+        <div class="row"><label>金額（円）</label>
+          <div style="display:flex; gap:8px"><input id="tAmount" type="number" min="1" required placeholder="10000" style="flex:1; min-width:0"><button type="button" class="btn secondary" style="white-space:nowrap; padding:8px 12px" onclick="fillTransferAll()">全額</button></div>
+        </div>
+        <div class="grid2">
+          <div class="row"><label>日付</label><input id="tDate" type="date"></div>
+          <div class="row"><label>メモ</label><input id="tMemo" placeholder="任意（例：会場で手渡し）"></div>
+        </div>
+        <button id="tSubmit" class="btn" style="width:100%">記録する</button>
+      </form>
+      <datalist id="peopleList"></datalist>
+      <h3 style="font-size:14px; margin:18px 0 6px">お金の流れ（履歴）</h3>
+      <div id="transferList"></div>
+    </div>
+    <div class="card">
       <h2>受け取り方法別</h2>
       <div id="methodChart"></div>
     </div>
@@ -483,6 +508,7 @@ async function loadAll() {
   state.expenses = data.expenses;
   state.budgets = data.budgets;
   await loadIntake();
+  await loadTransfers();
   if ((!state.currentProject || !state.projects.some(p => p.id === state.currentProject)) && state.projects.length > 0) {
     state.currentProject = state.projects[0].id;
   }
@@ -1005,6 +1031,113 @@ function render() {
     </div>`;
   }).join('');
   renderIntake();
+  renderHolders();
+}
+
+// ===== 預かり金（受取者ごと）と付け替え =====
+state.transfers = [];
+const NONAME = '（受取者未設定）';
+const pname = n => n ? n : NONAME;
+
+async function loadTransfers() {
+  const { data, error } = await db.rpc('room_transfer_list', { rid: state.room.id, p_pass: state.room.pass });
+  state.transfers = error ? [] : (data || []);
+}
+
+function holderStats() {
+  const pid = state.currentProject;
+  const m = {};
+  const get = n => (m[n] = m[n] || { name: n, recv: 0, tin: 0, tout: 0, exp: 0 });
+  state.donations.filter(d => d.project_id === pid).forEach(d => get((d.recipient || '').trim()).recv += d.amount);
+  state.transfers.filter(t => t.project_id === pid).forEach(t => { get(t.from_name || '').tout += t.amount; get(t.to_name).tin += t.amount; });
+  state.expenses.filter(e => e.project_id === pid && (e.handler || '').trim()).forEach(e => get(e.handler.trim()).exp += e.amount);
+  return Object.values(m).map(h => ({ ...h, bal: h.recv + h.tin - h.tout - h.exp }))
+    .sort((a, b) => (a.name === '') - (b.name === '') || b.bal - a.bal);
+}
+
+function renderHolders() {
+  const box = document.getElementById('holderList');
+  if (!box) return;
+  const hs = holderStats();
+  const yenS = n => (n < 0 ? '−' : '') + yen(Math.abs(n));
+  box.innerHTML = hs.length === 0 ? '<div class="empty">まだデータがありません</div>' : hs.map(h => {
+    const parts = [];
+    if (h.recv) parts.push('カンパ受取 ' + yen(h.recv));
+    if (h.tin) parts.push('受け取り +' + yen(h.tin));
+    if (h.tout) parts.push('渡した −' + yen(h.tout));
+    if (h.exp) parts.push('経費支払 −' + yen(h.exp));
+    return `<div class="stat-row" style="align-items:center">
+      <span><span style="font-weight:700${h.name ? '' : '; color:var(--muted)'}">${esc(pname(h.name))}</span><br><span style="font-size:11px; color:var(--muted)">${parts.join(' ・ ')}</span></span>
+      <span class="stat-amount" style="font-size:16px; color:${h.bal < 0 ? 'var(--red)' : 'var(--text)'}">${yenS(h.bal)}</span>
+    </div>`;
+  }).join('') + `<div class="stat-row total"><span>合計（手元にあるはずのお金）</span><span class="stat-amount">${yenS(hs.reduce((s, h) => s + h.bal, 0))}</span></div>`;
+
+  // 渡した人の選択肢（残高の多い順）
+  const sel = document.getElementById('tFrom');
+  const prev = sel.value;
+  sel.innerHTML = hs.map(h => `<option value="${esc(h.name)}">${esc(pname(h.name))}（${yenS(h.bal)}）</option>`).join('')
+    + '<option value="__other">その他（名前を入力）</option>';
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  // 受け取った人の名前候補
+  document.getElementById('peopleList').innerHTML = hs.filter(h => h.name).map(h => `<option value="${esc(h.name)}">`).join('');
+
+  // 履歴
+  const ts = state.transfers.filter(t => t.project_id === state.currentProject);
+  document.getElementById('transferList').innerHTML = ts.length === 0
+    ? '<div class="empty">まだ記録がありません</div>'
+    : ts.map(t => `
+      <div class="item">
+        <div class="info">
+          <div class="name">${esc(pname(t.from_name))} → ${esc(t.to_name)}</div>
+          <div class="meta">${t.date}${t.memo ? ' ・ ' + esc(t.memo) : ''}</div>
+        </div>
+        <div class="amount">${yen(t.amount)}</div>
+        <button class="del" onclick="delTransfer('${t.id}')" title="削除">✕</button>
+      </div>`).join('');
+}
+
+function onTransferFrom() {
+  const sel = document.getElementById('tFrom');
+  if (sel.value !== '__other') return;
+  const n = (prompt('渡した人の名前を入力してください') || '').trim();
+  if (!n) { sel.selectedIndex = 0; return; }
+  if (![...sel.options].some(o => o.value === n)) sel.insertAdjacentHTML('afterbegin', `<option value="${esc(n)}">${esc(n)}</option>`);
+  sel.value = n;
+}
+function fillTransferAll() {
+  const from = document.getElementById('tFrom').value;
+  const h = holderStats().find(x => x.name === from);
+  if (h && h.bal > 0) document.getElementById('tAmount').value = h.bal;
+}
+async function addTransfer(ev) {
+  ev.preventDefault();
+  const from = document.getElementById('tFrom').value;
+  const to = document.getElementById('tTo').value.trim();
+  const amount = parseInt(document.getElementById('tAmount').value, 10);
+  if (from === '__other') { alert('渡した人を選んでください'); return false; }
+  if (!to || !(amount > 0)) { alert('受け取った人と金額を入力してください'); return false; }
+  if (from === to) { alert('渡した人と受け取った人が同じです'); return false; }
+  const h = holderStats().find(x => x.name === from);
+  if (h && amount > h.bal && !confirm(`${pname(from)}さんの預かり金（${yen(Math.max(h.bal, 0))}）を超えています。記録しますか？`)) return false;
+  const btn = document.getElementById('tSubmit');
+  btn.disabled = true;
+  const { error } = await db.rpc('room_add_transfer', {
+    rid: state.room.id, p_pass: state.room.pass, pid: state.currentProject,
+    pfrom: from, pto: to, pamount: amount,
+    pmemo: document.getElementById('tMemo').value.trim(),
+    pdate: document.getElementById('tDate').value || null,
+  });
+  btn.disabled = false;
+  if (error) { alert('記録に失敗しました: ' + error.message); return false; }
+  ev.target.reset();
+  await loadAll();
+  return false;
+}
+async function delTransfer(id) {
+  if (!confirm('この受け渡しの記録を削除しますか？')) return;
+  const { error } = await db.rpc('room_del_transfer', { rid: state.room.id, p_pass: state.room.pass, tid: id });
+  if (error) return alert('削除に失敗しました: ' + error.message);
+  await loadAll();
 }
 
 // ===== 金額の選択ボタン（1,000〜20,000円＋その他） =====
